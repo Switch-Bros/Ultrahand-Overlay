@@ -1052,7 +1052,7 @@ namespace tsl {
             constexpr Color ColorFrameBackground  = { 0x0, 0x0, 0x0, 0xD };   ///< Overlay frame background color
             constexpr Color ColorTransparent      = { 0x0, 0x0, 0x0, 0x0 };   ///< Transparent color
             constexpr Color ColorHighlight        = { 0x0, 0xF, 0xD, 0xF };   ///< Greenish highlight color
-            constexpr Color ColorFrame            = { 0x7, 0x7, 0x7, 0x7 };   ///< Outer boarder color // CUSTOM MODIFICATION
+            constexpr Color ColorFrame            = { 0x4, 0x4, 0x4, 0xF };   ///< Outer boarder color // CUSTOM MODIFICATION
             constexpr Color ColorHandle           = { 0x5, 0x5, 0x5, 0xF };   ///< Track bar handle color
             constexpr Color ColorText             = { 0xF, 0xF, 0xF, 0xF };   ///< Standard text color
             constexpr Color ColorDescription      = { 0xA, 0xA, 0xA, 0xF };   ///< Description text color
@@ -2795,7 +2795,7 @@ namespace tsl {
                     
                     y_offset = 44;
                     if ((hideBattery == "true" && hidePCBTemp == "true" && hideSOCTemp == "true") || (hideClock == "true"))
-                        y_offset += 12;
+                        y_offset += 10;
                     
                     if (hideClock != "true") {// Use the 'timeStr' to display the time
                         
@@ -2807,7 +2807,7 @@ namespace tsl {
                         localizeTimeStr(timeStr); // for language localizations
                         
                         renderer->drawString(timeStr, false, tsl::cfg::FramebufferWidth - calculateStringWidth(timeStr, 20) - 20, y_offset, 20, clockColor);
-                        y_offset += 24;
+                        y_offset += 22;
                     }
                     
                     // check in 1s intervals
@@ -2842,7 +2842,7 @@ namespace tsl {
                     
                     if (hideBattery != "true" && batteryCharge > 0) {
                         chargeStringSTD = chargeString;
-                        PCB_temperatureStringSTD += " ";
+                        //PCB_temperatureStringSTD += " ";
                         // Use the 'timeStr' to display the time
                         if (powerCacheIsCharging)
                             renderer->drawString(chargeStringSTD.c_str(), false, tsl::cfg::FramebufferWidth - calculateStringWidth(chargeStringSTD, 20) - 19, y_offset, 20, tsl::Color(0x0, 0xF, 0x0, 0xF));
@@ -2854,8 +2854,8 @@ namespace tsl {
                             }
                         }
                     }
-                    if (hidePCBTemp != "true" && hideBattery != "true")
-                         SOC_temperatureStringSTD += " ";
+                    //if (hidePCBTemp != "true" && hideBattery != "true")
+                    //     SOC_temperatureStringSTD += " ";
                     
                     offset = 0;
                     if (hidePCBTemp != "true") {
@@ -2953,10 +2953,11 @@ namespace tsl {
                     }
                 }
                 
+                
                 if (this->m_title == "Ultrahand") {
-                    renderer->drawString(versionLabel.c_str(), false, 20, y+20+offset, 15, tsl::style::color::ColorDescription);
+                    renderer->drawString(versionLabel.c_str(), false, 20, y+25, 15, tsl::style::color::ColorDescription);
                 } else
-                    renderer->drawString(this->m_subtitle.c_str(), false, 20, y+20+offset, 15, tsl::style::color::ColorDescription);
+                    renderer->drawString(this->m_subtitle.c_str(), false, 20, y+20, 15, tsl::style::color::ColorDescription);
                 
                 renderer->drawRect(15, tsl::cfg::FramebufferHeight - 73, tsl::cfg::FramebufferWidth - 30, 1, defaultTextColor);
                 
