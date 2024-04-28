@@ -25,6 +25,29 @@
 #include <debug_funcs.hpp>
 
 
+
+// Function to remove invalid characters from file names
+std::string cleanFileName(const std::string& fileName) {
+    std::string cleanedFileName;
+    for (char c : fileName) {
+        if (std::isalnum(c) || std::isspace(c) || c == '-' || c == '_') {
+            cleanedFileName += c;
+        }
+    }
+    return cleanedFileName;
+}
+
+// Function to clean directory names by removing invalid characters
+std::string cleanDirectoryName(const std::string& name) {
+    std::string cleanedName;
+    for (char c : name) {
+        if (std::isalnum(c) || std::isspace(c) || c == '-' || c == '_') {
+            cleanedName += c;
+        }
+    }
+    return cleanedName;
+}
+
 /**
  * @brief Trims leading and trailing whitespaces from a string.
  *
@@ -268,24 +291,21 @@ std::vector<std::string> stringToList(const std::string& str) {
  * @brief Parses a JSON string into a json_t object.
  *
  * This function takes a JSON string as input and parses it into a json_t object using Jansson library's `json_loads` function.
- * If parsing fails, it returns an empty json_t object.
+ * If parsing fails, it logs the error and returns nullptr.
  *
  * @param input The input JSON string to parse.
- * @return A json_t object representing the parsed JSON, or an empty json_t object if parsing fails.
+ * @return A json_t object representing the parsed JSON, or nullptr if parsing fails.
  */
 json_t* stringToJson(const std::string& input) {
-    json_t* jsonObj = nullptr;
     json_error_t error;
-    
-    //logMessage(input.c_str());
-    jsonObj = json_loads(input.c_str(), 0, &error);
-    if (jsonObj) {
-        return jsonObj;
-    } else {
-        // Return an empty json_t* (you can also return nullptr)
-        logMessage("ERROR LOADING JSON FROM STRING!");
-        return json_object();
+    json_t* jsonObj = json_loads(input.c_str(), 0, &error);
+
+    if (!jsonObj) {
+        logMessage("Failed to parse JSON: " + std::string(error.text) + " at line " + std::to_string(error.line));
+        return nullptr; // Return nullptr to indicate failure clearly
     }
+
+    return jsonObj;
 }
 
 

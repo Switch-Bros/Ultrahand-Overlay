@@ -21,6 +21,10 @@
 #include <sys/stat.h>
 #include <dirent.h>
 
+static std::atomic<bool> abortFileOp(false);
+
+const size_t copyBufferSize = 4096*3; // Increase buffer size to 128 KB
+
 /**
  * @brief Creates a single directory if it doesn't exist.
  *
@@ -107,10 +111,11 @@ void deleteFileOrDirectory(const std::string& pathToDelete) {
     if (stat(pathToDelete.c_str(), &pathStat) == 0) {
         if (S_ISREG(pathStat.st_mode)) {
             if (std::remove(pathToDelete.c_str()) == 0) {
-                // Deletion successful
+                //logMessage("File deleted: " + pathToDelete);
+            } else {
+                logMessage("Failed to delete file: " + pathToDelete);
             }
         } else if (S_ISDIR(pathStat.st_mode)) {
-            // Delete all files in the directory
             DIR* directory = opendir(pathToDelete.c_str());
             if (directory != nullptr) {
                 dirent* entry;
@@ -122,15 +127,23 @@ void deleteFileOrDirectory(const std::string& pathToDelete) {
                     }
                 }
                 closedir(directory);
+            } else {
+                logMessage("Failed to open directory: " + pathToDelete);
             }
             
-            // Remove the directory itself
             if (rmdir(pathToDelete.c_str()) == 0) {
-                // Deletion successful
+                //logMessage("Directory deleted: " + pathToDelete);
+            } else {
+                logMessage("Failed to delete directory: " + pathToDelete);
             }
+        } else {
+            logMessage("Invalid file type: " + pathToDelete);
         }
+    } else {
+        //logMessage("Error accessing path: " + pathToDelete);
     }
 }
+
 
 /**
  * @brief Deletes files or directories that match a specified pattern.
@@ -295,15 +308,24 @@ void copySingleFile(const std::string& fromFile, const std::string& toFile) {
     FILE* srcFile = fopen(fromFile.c_str(), "rb");
     FILE* destFile = fopen(toFile.c_str(), "wb");
     if (srcFile && destFile) {
-        const size_t bufferSize = 131072; // Increase buffer size to 128 KB
-        char buffer[bufferSize];
+        char buffer[copyBufferSize];
         size_t bytesRead;
         
-        while ((bytesRead = fread(buffer, 1, bufferSize, srcFile)) > 0)
+        while ((bytesRead = fread(buffer, 1, copyBufferSize, srcFile)) > 0) {
             fwrite(buffer, 1, bytesRead, destFile);
+            if (abortFileOp.load(std::memory_order_acquire)) {
+                break;
+            }
+        }
+
         
         fclose(srcFile);
         fclose(destFile);
+        if (abortFileOp.load(std::memory_order_acquire)) {
+            deleteFileOrDirectory(toFile);
+            abortFileOp.store(false, std::memory_order_release);
+        }
+
     } else {
         // Error opening files or performing copy action.
         // Handle the error accordingly.
@@ -320,92 +342,57 @@ void copySingleFile(const std::string& fromFile, const std::string& toFile) {
  * @param fromFileOrDirectory The path of the source file or directory to be copied.
  * @param toFileOrDirectory The path of the destination where the file or directory will be copied.
  */
-void copyFileOrDirectory(const std::string& fromFileOrDirectory, const std::string& toFileOrDirectory) {
-    struct stat fromFileOrDirectoryInfo;
-    if (stat(fromFileOrDirectory.c_str(), &fromFileOrDirectoryInfo) == 0) {
-        if (S_ISREG(fromFileOrDirectoryInfo.st_mode)) {
-            // Source is a regular file
-            std::string fromFile = fromFileOrDirectory;
-            
-            struct stat toFileOrDirectoryInfo;
-            
-            if (stat(toFileOrDirectory.c_str(), &toFileOrDirectoryInfo) == 0 && S_ISDIR(toFileOrDirectoryInfo.st_mode)) {
-                // Destination is a directory
-                std::string toDirectory = toFileOrDirectory;
-                std::string fileName = fromFile.substr(fromFile.find_last_of('/') + 1);
-                std::string toFilePath = toDirectory + fileName;
-                
-                // Create the destination directory if it doesn't exist
-                createDirectory(toDirectory);
-                
-                // Check if the destination file exists and remove it
-                if (stat(toFilePath.c_str(), &toFileOrDirectoryInfo) == 0 && S_ISREG(toFileOrDirectoryInfo.st_mode))
-                    std::remove(toFilePath.c_str());
-                
-                copySingleFile(fromFile, toFilePath);
-            } else {
-                std::string toFile = toFileOrDirectory;
-                // Destination is a file or doesn't exist
-                std::string toDirectory = toFile.substr(0, toFile.find_last_of('/'));
-                
-                // Create the destination directory if it doesn't exist
-                createDirectory(toDirectory);
-                
-                // Destination is a file or doesn't exist
-                // Check if the destination file exists and remove it
-                if (stat(toFile.c_str(), &toFileOrDirectoryInfo) == 0 && S_ISREG(toFileOrDirectoryInfo.st_mode))
-                    std::remove(toFile.c_str());
-                
-                copySingleFile(fromFile, toFile);
+void copyFileOrDirectory(const std::string& fromPath, const std::string& toPath) {
+    struct stat fromStat;
+    if (stat(fromPath.c_str(), &fromStat) != 0) {
+        logMessage("Failed to get stat of " + fromPath);
+        return;
+    }
+
+    if (S_ISREG(fromStat.st_mode)) {
+        std::string toFilePath = toPath;
+        if (toPath.back() == '/') {
+            toFilePath += getNameFromPath(fromPath);
+        }
+
+        struct stat toStat;
+        if (stat(toFilePath.c_str(), &toStat) == 0 && S_ISREG(toStat.st_mode)) {
+            std::remove(toFilePath.c_str());  // Remove the file if it already exists
+        }
+
+        createDirectory(toPath.substr(0, toPath.find_last_of('/')));
+        copySingleFile(fromPath, toFilePath);
+    } else if (S_ISDIR(fromStat.st_mode)) {
+        DIR* dir = opendir(fromPath.c_str());
+        if (!dir) {
+            logMessage("Failed to open directory: " + fromPath);
+            return;
+        }
+
+        std::string toDirPath = toPath;
+        if (toPath.back() != '/') {
+            toDirPath += '/';
+        }
+        toDirPath += getNameFromPath(fromPath) + '/';
+
+        createDirectory(toDirPath);
+
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+                continue;
             }
-        } else if (S_ISDIR(fromFileOrDirectoryInfo.st_mode)) {
-            // Source is a directory
-            std::string fromDirectory = fromFileOrDirectory;
-            //logMessage("fromDirectory: "+fromDirectory);
-            
-            struct stat toFileOrDirectoryInfo;
-            if (stat(toFileOrDirectory.c_str(), &toFileOrDirectoryInfo) == 0 && S_ISDIR(toFileOrDirectoryInfo.st_mode)) {
-                // Destination is a directory
-                std::string toDirectory = toFileOrDirectory;
-                std::string dirName = getNameFromPath(fromDirectory);
-                if (dirName != "") {
-                    std::string toDirPath = toDirectory + dirName +"/";
-                    //logMessage("toDirectory: "+toDirectory);
-                    //logMessage("dirName: "+dirName);
-                    //logMessage("toDirPath: "+toDirPath);
-                    
-                    // Create the destination directory
-                    createDirectory(toDirPath);
-                    //mkdir(toDirPath.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
-                    
-                    // Open the source directory
-                    DIR* dir = opendir(fromDirectory.c_str());
-                    if (dir != nullptr) {
-                        dirent* entry;
-                        std::string fromFilePath, subFolderPath;
-                        
-                        while ((entry = readdir(dir)) != nullptr) {
-                            const std::string& fileOrFolderName = entry->d_name;
-                            
-                            // handle cade for files
-                            if (fileOrFolderName != "." && fileOrFolderName != "..") {
-                                fromFilePath = fromDirectory + fileOrFolderName;
-                                copyFileOrDirectory(fromFilePath, toDirPath);
-                            }
-                            // handle case for subfolders within the from file path
-                            if (entry->d_type == DT_DIR && fileOrFolderName != "." && fileOrFolderName != "..") {
-                                subFolderPath = fromDirectory + fileOrFolderName + "/";
-                                copyFileOrDirectory(subFolderPath, toDirPath);
-                            }
-                            
-                        }
-                        closedir(dir);
-                    }
-                }
-            }
+
+            std::string newFromPath = fromPath + '/' + entry->d_name;
+            copyFileOrDirectory(newFromPath, toDirPath);
+        }
+
+        if (closedir(dir) != 0) {
+            logMessage("Failed to close directory: " + fromPath);
         }
     }
 }
+
 
 /**
  * @brief Copies files or directories matching a specified pattern to a destination directory.

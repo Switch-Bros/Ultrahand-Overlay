@@ -21,6 +21,8 @@
 #include <jansson.h>
 #include <get_funcs.hpp>
 
+//constexpr size_t jsonBufferSize = 1024; // Choose an appropriate buffer size
+
 /**
  * @brief Reads JSON data from a file and returns it as a `json_t` object.
  *
@@ -28,52 +30,55 @@
  * @return A `json_t` object representing the parsed JSON data. Returns `nullptr` on error.
  */
 json_t* readJsonFromFile(const std::string& filePath) {
-    // Check if the file exists
+    // Check file existence and size
     struct stat fileStat;
-    if (stat(filePath.c_str(), &fileStat) != 0) {
-        //fprintf(stderr, "Error opening file: %s\n", filePath.c_str());
+    if (stat(filePath.c_str(), &fileStat) != 0 || fileStat.st_size == 0) {
+        //logMessage("File does not exist or is empty: " + filePath);
         return nullptr;
     }
-    
+
     // Open the file
-    FILE* file = fopen(filePath.c_str(), "r");
+    FILE* file = fopen(filePath.c_str(), "rb"); // Open in binary mode to ensure no character translation
     if (!file) {
-        //fprintf(stderr, "Error opening file: %s\n", filePath.c_str());
+        //logMessage("Failed to open file: " + filePath);
         return nullptr;
     }
-    
-    // Get the file size
-    size_t fileSize = fileStat.st_size;
-    
-    // Read the file content into a buffer
-    char* buffer = static_cast<char*>(malloc(fileSize + 1));
+
+    // Allocate memory based on file size
+    char* buffer = new (std::nothrow) char[fileStat.st_size + 1];
     if (!buffer) {
-        //fprintf(stderr, "Memory allocation error.\n");
         fclose(file);
+        //logMessage("Memory allocation failed for reading file: " + filePath);
         return nullptr;
     }
-    
-    size_t bytesRead = fread(buffer, 1, fileSize, file);
+
+    // Read the entire file into the buffer
+    size_t bytesRead = fread(buffer, 1, fileStat.st_size, file);
+    if (bytesRead < static_cast<size_t>(fileStat.st_size)) {
+        fclose(file);
+        delete[] buffer;
+        logMessage("Failed to read the entire file: " + filePath);
+        return nullptr;
+    }
+
+    // Null-terminate the buffer to make it a valid C-string
     buffer[bytesRead] = '\0';
-    
-    // Close the file
-    fclose(file);
-    
-    // Parse the JSON data
+
+    // Parse the JSON content
     json_error_t error;
-    json_t* root = json_loads(buffer, JSON_DECODE_ANY, &error);
+    json_t* root = json_loads(buffer, 0, &error);
     if (!root) {
-        //fprintf(stderr, "Error parsing JSON: %s\n", error.text);
-        free(buffer);
-        return nullptr;
+        //logMessage("JSON parsing error at line " + std::to_string(error.line) + ": " + error.text);
+    } else {
+        //logMessage("JSON file successfully parsed.");
     }
-    
+
     // Clean up
-    free(buffer);
-    
+    fclose(file);
+    delete[] buffer;
+
     return root;
 }
-
 
 
 /**
@@ -97,8 +102,7 @@ std::string replaceJsonPlaceholder(const std::string& arg, const std::string& co
     }
     
     if (!jsonDict) {
-        // If JSON parsing failed or jsonDict is nullptr, return the original string
-        return arg;
+        return arg; // Return the original string if JSON parsing failed or jsonDict is nullptr
     }
     
     std::string replacement = arg;
@@ -107,26 +111,24 @@ std::string replaceJsonPlaceholder(const std::string& arg, const std::string& co
     size_t endPos, nextPos, commaPos, len, _index;
     bool validValue;
     std::vector<std::string> keysAndIndexes;
+    keysAndIndexes.reserve(5); // Reserve capacity for keysAndIndexes vector
     
     while (startPos != std::string::npos) {
-        keysAndIndexes.clear();
+        keysAndIndexes.clear(); // Clear the vector for reuse
         endPos = replacement.find(")}", startPos);
         if (endPos == std::string::npos) {
-            
             break;  // Missing closing brace, exit the loop
         }
         
         std::string placeholder = replacement.substr(startPos, endPos - startPos + 2);
         
         // Extract keys and indexes from the placeholder
-        //std::vector<std::string> keysAndIndexes;
-        //keysAndIndexes.clear();
         nextPos = startPos + searchString.length();
         
         while (nextPos < endPos) {
             commaPos = replacement.find(',', nextPos);
             len = (commaPos != std::string::npos) ? (commaPos - nextPos) : (endPos - nextPos);
-            keysAndIndexes.push_back(replacement.substr(nextPos, len));
+            keysAndIndexes.emplace_back(replacement.substr(nextPos, len));
             nextPos += len + 1;
         }
         
