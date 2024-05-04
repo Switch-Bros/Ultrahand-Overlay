@@ -55,7 +55,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 #---------------------------------------------------------------------------------
 APP_TITLE	:= Ultrahand
 APP_AUTHOR	:= ppkantorski
-APP_VERSION	:= 1.5.2
+APP_VERSION	:= 1.5.4
 TARGET	    := ovlmenu
 BUILD	    := build
 SOURCES	    := source common 
@@ -70,15 +70,17 @@ ARCH := -march=armv8-a+crc+crypto -mtune=cortex-a57 -mtp=soft -fPIE
 CFLAGS := -Wall -Os -ffunction-sections -fdata-sections -flto\
 			$(ARCH) $(DEFINES)
 
-CFLAGS += $(INCLUDE) -D__SWITCH__ -DAPP_VERSION="\"$(APP_VERSION)\""
+CFLAGS += $(INCLUDE) -D__SWITCH__ -DAPP_VERSION="\"$(APP_VERSION)\"" -D_FORTIFY_SOURCE=2
 
-CXXFLAGS := $(CFLAGS) -fexceptions -std=c++20 -Wno-dangling-else
+CXXFLAGS := $(CFLAGS) -std=c++20 -Wno-dangling-else
 
 ASFLAGS := $(ARCH)
-LDFLAGS += -specs=$(DEVKITPRO)/libnx/switch.specs $(ARCH) -Wl,-Map,$(notdir $*.map) -Wl,--gc-sections
+LDFLAGS += -specs=$(DEVKITPRO)/libnx/switch.specs $(ARCH) -Wl,-Map,$(notdir $*.map)
 
 LIBS := -lcurl -lz -lzzip -lmbedtls -lmbedx509 -lmbedcrypto -ljansson -lnx 
 
+CXXFLAGS += -fno-exceptions -ffunction-sections -fdata-sections -fno-rtti
+LDFLAGS += -Wl,--gc-sections -Wl,--as-needed
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
