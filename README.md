@@ -6,12 +6,14 @@
 
 Create directories, manage files, and customize configurations effortlessly using simple ini files.
 
-![Slideshow](https://gbatemp.net/attachments/ezgif-4-024e7852d3-gif.400949/)
+[![Ultrahand Logo](.pics/banner.gif)](https://gbatemp.net/threads/ultrahand-overlay-the-fully-craft-able-overlay-executor.633560/)
 
 Ultrahand Overlay is a [Tesla Menu](https://github.com/WerWolv/Tesla-Menu) replacement built from the ground up off of [libtesla](https://github.com/WerWolv/libtesla) that provides powerful C/C++ commands through the usage of its own custom interpretive programming language (similar to Shell/BASH).  It is a versatile tool that enables you to create and share custom command-based packages, providing enhanced functionality for managing settings, files and directories on your Nintendo Switch.
 
 With Ultrahand, you have the flexibility to customize and shape your file management system according to your needs, empowering you with greater control over your system configurations.
 
+## Screenshots
+![Slideshow](https://gbatemp.net/attachments/ezgif-4-024e7852d3-gif.400949/)
 
 ## Features
 
@@ -52,7 +54,7 @@ To use Ultrahand, follow these steps:
 2. Download the latest Ultrahand [ovlmenu.ovl](https://github.com/ppkantorski/Ultrahand-Overlay/releases/latest/download/ovlmenu.ovl) and place it within `/switch/.overlays/`.
     - WARNING: This will overwrite `Tesla Menu` if already installed.
 3. After installing Ultrahand Overlay, a new folder named `ultrahand` will be created within the root config folder on your SD card (`/config/ultrahand/`) along with a `config.ini` file containing various Ultrahand settings.
-4. Launch Ultrahand similarly to `Tesla Menu` with your specified hotkey.  A new folder will be made (`/switch/.packages/`) with a preset `package.ini` file for your base menu commands.
+4. Launch Ultrahand (similarly to `Tesla Menu`) with Tesla's default hotkeys or Ultrahand's (`ZL+ZR+DDOWN`).  A new folder will be made (`/switch/.packages/`) with a preset `package.ini` file for your base menu commands.
 
 5. Place your custom `package.ini` package file in your Ultrahand package directory (`/switch/.packages/<PACKAGE_NAME>/`). This file will contains the commands for your custom Ultrahand package.
 6. Your commands will now show up on the packages menu within Ultrahand.
@@ -74,7 +76,8 @@ Please note that running homebrew software on your Nintendo Switch may void your
 
 To compile and run the software, you need to have the following C/C++ dependencies installed:
 
-- [custom libtesla fork](https://github.com/ppkantorski/Ultrahand-Overlay/tree/main/lib/libtesla)
+- [libultra](lib/libultra)
+- [custom libtesla](lib/libtesla)
 - switch-curl
 - switch-zziplib
 - switch-mbedtls
@@ -87,6 +90,6 @@ Contributions are welcome! If you have any ideas, suggestions, or bug reports, p
 
 ## License
 
-This project is licensed and distributed under [GPLv2](LICENSE) with custom code utilizing [CC-BY-4.0](SUB_LICENSE).
+This project is licensed and distributed under [GPLv2](LICENSE) with a custom library utilizing [CC-BY-4.0](SUB_LICENSE).
 
 Copyright (c) 2024 ppkantorski
