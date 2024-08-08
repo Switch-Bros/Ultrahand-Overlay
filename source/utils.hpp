@@ -1789,6 +1789,17 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
             std::string fileUrl = preprocessUrl(cmd[1]);
             std::string destinationPath = preprocessPath(cmd[2], packagePath);
             bool downloadSuccess = false;
+            Result rc;
+
+            //setIniFileValue((packagePath+CONFIG_FILENAME).c_str(), selectedCommand.c_str(), "footer", "downloading");
+            if (R_FAILED(rc = socketInitializeDefault())) {
+                return;
+            }
+            if (R_FAILED(rc = nifmInitialize(NifmServiceType_User))) {
+                socketExit();
+                return;
+            }
+            initializeCurl();
             for (size_t i = 0; i < 3; ++i) {
                 downloadSuccess = downloadFile(fileUrl, destinationPath);
                 if (abortDownload.load(std::memory_order_acquire)) {
@@ -1797,6 +1808,11 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
                 }
                 if (downloadSuccess) break;
             }
+            //downloadSuccess = enqueueDownloadFile(fileUrl, destinationPath);
+            //downloadSuccess = downloadFile(fileUrl, destinationPath);
+            cleanupCurl();
+            nifmExit();
+            socketExit();
             commandSuccess = downloadSuccess && commandSuccess;
         }
     } else if (commandName == "unzip") {
@@ -1879,7 +1895,9 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
         i2cExit();
         splExit();
         fsdevUnmountAll();
+        spsmInitialize();
         spsmShutdown(SpsmShutdownMode_Reboot);
+        spsmExit();
     } else if (commandName == "shutdown") {
         if (cmd.size() >= 2) {
             std::string selection = removeQuotes(cmd[1]);
@@ -1889,7 +1907,9 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
         } else {
             splExit();
             fsdevUnmountAll();
+            spsmInitialize();
             spsmShutdown(SpsmShutdownMode_Normal);
+            spsmExit();
         }
     } else if (commandName == "exit") {
         //triggerExit.store(true, std::memory_order_release);
