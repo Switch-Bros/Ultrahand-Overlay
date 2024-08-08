@@ -55,7 +55,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 #---------------------------------------------------------------------------------
 APP_TITLE	:= Ultrahand
 APP_AUTHOR	:= ppkantorski
-APP_VERSION	:= 1.6.4
+APP_VERSION	:= 1.6.8
 TARGET	    := ovlmenu
 BUILD	    := build
 SOURCES	    := source common 
@@ -85,6 +85,9 @@ LDFLAGS += -Wl,--gc-sections -Wl,--as-needed
 # For Ensuring Parallel LTRANS Jobs w/ GCC, make -j6
 CXXFLAGS += -flto -fuse-linker-plugin -flto=6
 LDFLAGS += -flto=6
+
+# Add -z notext to LDFLAGS to allow dynamic relocations in read-only segments
+LDFLAGS += -z notext
 
 # For Ensuring Parallel LTRANS Jobs w/ Clang, make -j6
 #CXXFLAGS += -flto -flto-jobs=6

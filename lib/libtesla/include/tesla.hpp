@@ -69,6 +69,8 @@ static bool inMainMenu = false;
 static bool inOverlaysPage = false;
 static bool inPackagesPage = false;
 
+static bool firstBoot = true; // for detecting first boot
+
 //static std::unordered_map<std::string, std::string> hexSumCache;
 
 // Define an atomic bool for interpreter completion
@@ -206,6 +208,18 @@ const std::string blackColor = "#000000";
 constexpr float M_PI = 3.14159265358979323846;
 constexpr float RAD_TO_DEG = 180.0f / M_PI;
 
+static std::string ENGLISH = "English";
+static std::string SPANISH = "Spanish";
+static std::string FRENCH = "French";
+static std::string GERMAN = "German";
+static std::string JAPANESE = "Japanese";
+static std::string KOREAN = "Korean";
+static std::string ITALIAN = "Italian";
+static std::string DUTCH = "Dutch";
+static std::string PORTUGUESE = "Portuguese";
+static std::string RUSSIAN = "Russian";
+static std::string SIMPLIFIED_CHINESE = "Simplified Chinese";
+static std::string TRADITIONAL_CHINESE = "Traditional Chinese";
 static std::string DEFAULT_CHAR_WIDTH = "0.33";
 static std::string UNAVAILABLE_SELECTION = "Not available";
 static std::string OVERLAYS = "Overlays"; //defined in libTesla now
@@ -316,6 +330,18 @@ static std::string DEC = "Dec";
 
 // Constant string definitions (English)
 void reinitializeLangVars() {
+    ENGLISH = "English";
+    SPANISH = "Spanish";
+    FRENCH = "French";
+    GERMAN = "German";
+    JAPANESE = "Japanese";
+    KOREAN = "Korean";
+    ITALIAN = "Italian";
+    DUTCH = "Dutch";
+    PORTUGUESE = "Portuguese";
+    RUSSIAN = "Russian";
+    SIMPLIFIED_CHINESE = "Simplified Chinese";
+    TRADITIONAL_CHINESE = "Traditional Chinese";
     DEFAULT_CHAR_WIDTH = "0.33";
     UNAVAILABLE_SELECTION = "Not available";
     OVERLAYS = "Overlays"; //defined in libTesla now
@@ -442,6 +468,18 @@ void parseLanguage(std::string langFile) {
         return;
     
     std::map<std::string, std::string*> configMap = {
+        {"ENGLISH", &ENGLISH},
+        {"SPANISH", &SPANISH},
+        {"FRENCH", &FRENCH},
+        {"GERMAN", &GERMAN},
+        {"JAPANESE", &JAPANESE},
+        {"KOREAN", &KOREAN},
+        {"ITALIAN", &ITALIAN},
+        {"DUTCH", &DUTCH},
+        {"PORTUGUESE", &PORTUGUESE},
+        {"RUSSIAN", &RUSSIAN},
+        {"SIMPLIFIED_CHINESE", &SIMPLIFIED_CHINESE},
+        {"TRADITIONAL_CHINESE", &TRADITIONAL_CHINESE},
         {"DEFAULT_CHAR_WIDTH", &DEFAULT_CHAR_WIDTH},
         {"UNAVAILABLE_SELECTION", &UNAVAILABLE_SELECTION},
         {"OVERLAYS", &OVERLAYS},
@@ -1525,7 +1563,7 @@ namespace tsl {
             { HidNpadButton_Right, "DRIGHT", "\uE0EE" }, { HidNpadButton_Down, "DDOWN", "\uE0EC" },
             { HidNpadButton_A, "A", "\uE0E0" }, { HidNpadButton_B, "B", "\uE0E1" },
             { HidNpadButton_X, "X", "\uE0E2" }, { HidNpadButton_Y, "Y", "\uE0E3" },
-            { HidNpadButton_StickL, "LS", "\uE08E" }, { HidNpadButton_StickR, "RS", "\uE08B" },
+            { HidNpadButton_StickL, "LS", "\uE08A" }, { HidNpadButton_StickR, "RS", "\uE08B" },
             { HidNpadButton_Minus, "MINUS", "\uE0B6" }, { HidNpadButton_Plus, "PLUS", "\uE0B5" }
         }};
         
@@ -4743,9 +4781,10 @@ namespace tsl {
             // Ensure the order of initialization matches the order of declaration
             TrackBar(std::string label, std::string packagePath = "", s16 minValue = 0, s16 maxValue = 100, std::string units = "",
                      std::function<void(std::vector<std::vector<std::string>>&&, const std::string&, const std::string&)> executeCommands = nullptr,
+                     std::function<std::vector<std::vector<std::string>>(const std::vector<std::vector<std::string>>&, const std::string&, size_t, const std::string&)> sourceReplacementFunc = nullptr,
                      std::vector<std::vector<std::string>> cmd = {}, const std::string& selCmd = "", bool usingStepTrackbar = false, bool usingNamedStepTrackbar = false, s16 numSteps = -1, bool unlockedTrackbar = false, bool executeOnEveryTick = false)
                 : m_label(label), m_packagePath(packagePath), m_minValue(minValue), m_maxValue(maxValue), m_units(units),
-                  interpretAndExecuteCommands(executeCommands), commands(std::move(cmd)), selectedCommand(selCmd), m_usingStepTrackbar(usingStepTrackbar), m_usingNamedStepTrackbar(usingNamedStepTrackbar), m_numSteps(numSteps), m_unlockedTrackbar(unlockedTrackbar), m_executeOnEveryTick(executeOnEveryTick) {
+                  interpretAndExecuteCommands(executeCommands), getSourceReplacement(sourceReplacementFunc), commands(std::move(cmd)), selectedCommand(selCmd), m_usingStepTrackbar(usingStepTrackbar), m_usingNamedStepTrackbar(usingNamedStepTrackbar), m_numSteps(numSteps), m_unlockedTrackbar(unlockedTrackbar), m_executeOnEveryTick(executeOnEveryTick) {
                 if ((!usingStepTrackbar && !usingNamedStepTrackbar) || numSteps == -1) {
                     m_numSteps = maxValue - minValue;
                 }
@@ -4784,7 +4823,7 @@ namespace tsl {
             virtual Element* requestFocus(Element *oldFocus, FocusDirection direction) {
                 return this;
             }
-
+            
             inline void updateAndExecute(bool updateIni = true) {
                 if (m_packagePath.empty()) {
                     return;
@@ -4797,11 +4836,11 @@ namespace tsl {
                     setIniFileValue(m_packagePath + "config.ini", m_label, "index", indexStr);
                     setIniFileValue(m_packagePath + "config.ini", m_label, "value", valueStr);
                 }
-
+                
                 if (interpretAndExecuteCommands) {
-                    auto commandsCopy = commands;
+                    auto modifiedCmds = getSourceReplacement(commands, valueStr, m_index, m_packagePath);
                     size_t pos;
-                    for (auto& cmd : commandsCopy) {
+                    for (auto& cmd : modifiedCmds) {
                         for (auto& arg : cmd) {
                             pos = 0;
                             while ((pos = arg.find("{value}", pos)) != std::string::npos) {
@@ -4818,7 +4857,8 @@ namespace tsl {
                             }
                         }
                     }
-                    interpretAndExecuteCommands(std::move(commandsCopy), m_packagePath, selectedCommand);
+                    
+                    interpretAndExecuteCommands(std::move(modifiedCmds), m_packagePath, selectedCommand);
                 }
             }
             
@@ -5124,6 +5164,7 @@ namespace tsl {
 
             // New member variables to store the function and its parameters
             std::function<void(std::vector<std::vector<std::string>>&&, const std::string&, const std::string&)> interpretAndExecuteCommands;
+            std::function<std::vector<std::vector<std::string>>(const std::vector<std::vector<std::string>>&, const std::string&, size_t, const std::string&)> getSourceReplacement;
             std::vector<std::vector<std::string>> commands;
             std::string selectedCommand;
 
@@ -5152,8 +5193,9 @@ namespace tsl {
              */
             StepTrackBar(std::string label, std::string packagePath, size_t numSteps, s16 minValue, s16 maxValue, std::string units,
                 std::function<void(std::vector<std::vector<std::string>>&&, const std::string&, const std::string&)> executeCommands = nullptr,
+                std::function<std::vector<std::vector<std::string>>(const std::vector<std::vector<std::string>>&, const std::string&, size_t, const std::string&)> sourceReplacementFunc = nullptr,
                 std::vector<std::vector<std::string>> cmd = {}, const std::string& selCmd = "", bool usingNamedStepTrackbar = false, bool unlockedTrackbar = false, bool executeOnEveryTick = false)
-                : TrackBar(label, packagePath, minValue, maxValue, units, executeCommands, cmd, selCmd, !usingNamedStepTrackbar, usingNamedStepTrackbar, numSteps, unlockedTrackbar, executeOnEveryTick) {
+                : TrackBar(label, packagePath, minValue, maxValue, units, executeCommands, sourceReplacementFunc, cmd, selCmd, !usingNamedStepTrackbar, usingNamedStepTrackbar, numSteps, unlockedTrackbar, executeOnEveryTick) {
                     ////usingStepTrackbar = true;
                     //if (!m_packagePath.empty()) {
                     //    //logMessage("before StepTrackBar initialize value.");
@@ -5320,8 +5362,9 @@ namespace tsl {
              */
             NamedStepTrackBar(std::string label, std::string packagePath, std::vector<std::string> stepDescriptions,
                 std::function<void(std::vector<std::vector<std::string>>&&, const std::string&, const std::string&)> executeCommands = nullptr,
+                std::function<std::vector<std::vector<std::string>>(const std::vector<std::vector<std::string>>&, const std::string&, size_t, const std::string&)> sourceReplacementFunc = nullptr,
                 std::vector<std::vector<std::string>> cmd = {}, const std::string& selCmd = "", bool unlockedTrackbar = false, bool executeOnEveryTick = false)
-                : StepTrackBar(label, packagePath, stepDescriptions.size(), 0, (stepDescriptions.size()-1), "", executeCommands, cmd, selCmd, true, unlockedTrackbar, executeOnEveryTick), m_stepDescriptions(stepDescriptions) {
+                : StepTrackBar(label, packagePath, stepDescriptions.size(), 0, (stepDescriptions.size()-1), "", executeCommands, sourceReplacementFunc, cmd, selCmd, true, unlockedTrackbar, executeOnEveryTick), m_stepDescriptions(stepDescriptions) {
                     //usingNamedStepTrackbar = true;
                     //logMessage("on initialization");
                 }
@@ -6376,11 +6419,15 @@ namespace tsl {
 
 
     static void setNextOverlay(const std::string& ovlPath, std::string origArgs) {
-        
-        //std::string args = std::filesystem::path(ovlPath).filename();
+        // std::string args = std::filesystem::path(ovlPath).filename();
         std::string args = getNameFromPath(ovlPath); // CUSTOM MODIFICATION
-        args += " " + origArgs + " --skipCombo";
-        
+        args += " " + origArgs;
+    
+        // Check if "--skipCombo" is already in origArgs
+        if (origArgs.find("--skipCombo") == std::string::npos) {
+            args += " --skipCombo";
+        }
+    
         envSetNextLoad(ovlPath.c_str(), args.c_str());
     }
     
@@ -6400,6 +6447,19 @@ namespace tsl {
     static inline int loop(int argc, char** argv) {
         static_assert(std::is_base_of_v<tsl::Overlay, TOverlay>, "tsl::loop expects a type derived from tsl::Overlay");
         
+        // CUSTOM SECTION START
+        // Argument parsing
+        bool skipCombo = false;
+        for (u8 arg = 0; arg < argc; arg++) {
+            if ((strcasecmp(argv[arg], "--skipCombo") == 0)) {
+                skipCombo = true;
+                //logMessage("Skip combo is present.");
+                firstBoot = false;
+                break;
+            }
+            //std::memset(argv[arg], 0, std::strlen(argv[arg]));
+        }
+
         impl::SharedThreadData shData;
         
         shData.running = true;
@@ -6419,16 +6479,6 @@ namespace tsl {
         overlay->changeTo(overlay->loadInitialGui());
 
         
-        // CUSTOM SECTION START
-        // Argument parsing
-        bool skipCombo = false;
-        for (u8 arg = 0; arg < argc; arg++) {
-            if ((strcasecmp(argv[arg], "--skipCombo") == 0)) {
-                skipCombo = true;
-                break;
-            }
-            //std::memset(argv[arg], 0, std::strlen(argv[arg]));
-        }
         
         
         bool inOverlay = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, IN_OVERLAY_STR) != FALSE_STR);
@@ -6514,7 +6564,7 @@ extern "C" {
     
     u32 __nx_applet_type = AppletType_None;
     u32 __nx_fs_num_sessions = 1;
-    u32  __nx_nv_transfermem_size = 0x16000;
+    u32  __nx_nv_transfermem_size = 0x15000;
     ViLayerFlags __nx_vi_stray_layer_flags = (ViLayerFlags)0;
     
     /**
