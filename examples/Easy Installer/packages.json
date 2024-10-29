@@ -30,8 +30,8 @@
         "file-3-url": "https://github.com/Switch-Bros/Ultrahand-Overlay/blob/main/examples/Host%20Guard/sysmmc.txt"
     },
     {
-        "name": "SB Theme",
-        "label": "Theme",
+        "name": "SB Themes",
+        "label": "SB Themes",
         "file-1-url": "https://github.com/Switch-Bros/Ultrahand-Overlay/blob/main/examples/Theme/package.ini"
     },
     {
