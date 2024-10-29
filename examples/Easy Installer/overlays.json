@@ -10,6 +10,11 @@
         "download-entry": "0"
     },
     {
+        "name": "Tetris-Overlay - latest",
+        "ovl-url": "https://api.github.com/repos/ppkantorski/Tetris-Overlay/releases?per_page=1&sort=created&order=desc",
+        "download-entry": "0"
+    },
+    {
         "name": "Fizeau - latest",
         "zip-url": "https://api.github.com/repos/averne/Fizeau/releases?per_page=1&sort=created&order=desc",
         "download-entry": "0"
