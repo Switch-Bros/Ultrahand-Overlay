@@ -1,0 +1,42 @@
+[
+    {
+        "name": "BatteryDesyncFix - neueste",
+        "nro-url": "https://api.github.com/repos/CTCaer/battery_desync_fix_nx/releases?per_page=1&sort=created&order=desc",
+        "download-entry": "0"
+    },
+    {
+        "name": "DNS-Block Tester - neueste",
+        "nro-url": "https://api.github.com/repos/Switch-Bros/DNS-Block_Tester/releases?per_page=1&sort=created&order=desc",
+        "download-entry": "0"
+    },
+    {
+        "name": "fake08 - neueste",
+        "nro-url": "https://api.github.com/repos/jtothebell/fake-08/releases?per_page=1&sort=created&order=desc",
+        "download-entry": "3"
+    },
+    {
+        "name": "Hekate-Toolbox - neueste",
+        "nro-url": "https://api.github.com/repos/WerWolv/Hekate-Toolbox/releases?per_page=1&sort=created&order=desc",
+        "download-entry": "0"
+    },
+    {
+        "name": "JKSV - neueste",
+        "nro-url": "https://api.github.com/repos/J-D-K/JKSV/releases?per_page=1&sort=created&order=desc",
+        "download-entry": "0"
+    },
+    {
+        "name": "NX-Activity-Log - neueste",
+        "nro-url": "https://api.github.com/repos/tallbl0nde/NX-Activity-Log/releases?per_page=1&sort=created&order=desc",
+        "download-entry": "0"
+    },
+    {
+        "name": "TencentSwitcherGUI - neueste",
+        "zip-url": "https://api.github.com/repos/CaiMiao/Tencent-switcher-GUI/releases?per_page=1&sort=created&order=desc",
+        "download-entry": "0"
+    },
+    {
+        "name": "ThemezerNX - neueste",
+        "nro-url": "https://api.github.com/repos/suchmememanyskill/themezer-nx/releases?per_page=1&sort=created&order=desc",
+        "download-entry": "0"
+    }
+]
