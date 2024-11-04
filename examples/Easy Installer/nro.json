@@ -1,7 +1,7 @@
 [
     {
         "name": "BatteryDesyncFix - neueste",
-		"nro-url": "https://api.github.com/repos/CTCaer/battery_desync_fix_nx/releases?per_page=1&sort=created&order=desc",
+	"nro-url": "https://api.github.com/repos/CTCaer/battery_desync_fix_nx/releases?per_page=1&sort=created&order=desc",
         "ordner": "BatteryDesyncFix",
         "download-entry": "0"
     },
@@ -33,6 +33,12 @@
         "name": "NX-Activity-Log - neueste",
         "nro-url": "https://api.github.com/repos/tallbl0nde/NX-Activity-Log/releases?per_page=1&sort=created&order=desc",
         "ordner": "NX-Activity-Log",
+        "download-entry": "0"
+    },
+    {
+        "name": "ReverseNX-Tool - neueste",
+        "nro-url": "https://api.github.com/repos/masagrator/ReverseNX-Tool/releases?per_page=1&sort=created&order=desc",
+        "ordner": "ReverseNX-Tool",
         "download-entry": "0"
     },
     {
