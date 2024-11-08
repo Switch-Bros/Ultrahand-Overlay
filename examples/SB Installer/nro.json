@@ -1,7 +1,7 @@
 [
     {
         "name": "BatteryDesyncFix - neueste",
-	"nro-url": "https://api.github.com/repos/CTCaer/battery_desync_fix_nx/releases?per_page=1&sort=created&order=desc",
+		"nro-url": "https://api.github.com/repos/CTCaer/battery_desync_fix_nx/releases?per_page=1&sort=created&order=desc",
         "ordner": "BatteryDesyncFix",
         "download-entry": "0"
     },
