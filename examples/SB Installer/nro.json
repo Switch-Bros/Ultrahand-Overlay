@@ -1,13 +1,13 @@
 [
     {
         "name": "Amiibo Generator - neueste",
-		"nro-url": "https://github.com/Slluxx/AmiiboGenerator/releases/latest/download/AmiiboGenerator.nro",
+		"nro-url": "https://api.github.com/repos/Slluxx/AmiiboGenerator/releases?per_page=1&sort=created&order=desc",
         "ordner": "AmiiboGenerator",
         "download-entry": "0"
     },
     {
         "name": "Amiigo - neueste",
-		"nro-url": "https://github.com/Slluxx/AmiiboGenerator/releases/latest/download/Amiigo.nro",
+		"nro-url": "https://api.github.com/repos/CompSciOrBust/Amiigo/releases?per_page=1&sort=created&order=desc",
         "ordner": "Amiigo",
         "download-entry": "0"
     },
@@ -31,7 +31,7 @@
     },
     {
         "name": "GoldLeaf - neueste",
-		"nro-url": "https://github.com/XorTroll/Goldleaf/releases/latest/download/Goldleaf.nro",
+		"nro-url": "https://api.github.com/repos/XorTroll/Goldleaf/releases?per_page=1&sort=created&order=desc",
         "ordner": "Goldleaf",
         "download-entry": "0"
     },
@@ -55,7 +55,7 @@
     },
     {
         "name": "MiiPort - neueste",
-		"nro-url": "https://github.com/Genwald/MiiPort/releases/latest/download/MiiPort.nro",
+		"nro-url": "https://api.github.com/repos/Genwald/MiiPort/releases?per_page=1&sort=created&order=desc",
         "ordner": "MiiPort",
         "download-entry": "0"
     },
@@ -67,7 +67,7 @@
     },
     {
         "name": "Neumann - neueste",
-		"nro-url": "https://github.com/turtle-insect/Neumann/releases/latest/download/Neumann.nro",
+		"nro-url": "https://api.github.com/repos/turtle-insect/Neumann/releases?per_page=1&sort=created&order=desc",
         "ordner": "Neumann",
         "download-entry": "0"
     },
@@ -85,7 +85,7 @@
     },
     {
         "name": "NX-Shell - neueste",
-        "nro-url": "https://github.com/joel16/NX-Shell/releases/latest/download/NX-Shell.nro",
+        "nro-url": "https://api.github.com/repos/joel16/NX-Shell/releases?per_page=1&sort=created&order=desc",
         "ordner": "NX-Shell",
         "download-entry": "0"
     },
@@ -109,7 +109,7 @@
     },
     {
         "name": "vgedit - neueste",
-        "nro-url": "https://github.com/vgmoose/vgedit/releases/latest/download/vgedit.nro",
+        "nro-url": "https://api.github.com/repos/vgmoose/vgedit/releases?per_page=1&sort=created&order=desc",
         "ordner": "vgedit",
         "download-entry": "0"
     }
