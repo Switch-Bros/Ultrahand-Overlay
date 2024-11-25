@@ -36,6 +36,12 @@
         "download-entry": "0"
     },
     {
+        "name": "HB-AppStore - neueste",
+        "zip-url": "https://api.github.com/repos/fortheusers/hb-appstore/releases?per_page=1&sort=created&order=desc",
+        "ordner": "HB-AppStore",
+        "download-entry": "0"
+    },
+    {
         "name": "Hekate-Toolbox - neueste",
         "nro-url": "https://api.github.com/repos/WerWolv/Hekate-Toolbox/releases?per_page=1&sort=created&order=desc",
         "ordner": "Hekate-Toolbox",
