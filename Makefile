@@ -56,7 +56,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 #---------------------------------------------------------------------------------
 APP_TITLE	:= Ultrahand
 APP_AUTHOR	:= ppkantorski
-APP_VERSION	:= 1.9.0
+APP_VERSION	:= 1.9.1
 TARGET		:= ovlmenu
 BUILD		:= build
 SOURCES		:= source common lib/libultrahand/libultra/source
@@ -220,7 +220,9 @@ $(BUILD):
 
 	@rm -rf out/
 	@mkdir -p out/switch/.overlays/
+	@mkdir -p out/config/ultrahand/
 	@cp $(CURDIR)/$(TARGET).ovl out/switch/.overlays/$(TARGET).ovl
+	@cp -ar lang out/config/ultrahand/
 
 #---------------------------------------------------------------------------------
 clean:
@@ -235,6 +237,7 @@ dist: all
 
 	@rm -f $(TARGET).zip
 	@cd out; zip -r ../$(TARGET).zip ./*; cd ../
+
 #---------------------------------------------------------------------------------
 else
 .PHONY: all
