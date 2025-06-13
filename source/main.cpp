@@ -598,7 +598,7 @@ public:
             overlayHeader.version = APP_VERSION;
             overlayHeader.creator = "ppkantorski";
             overlayHeader.about = "Ultrahand Overlay is a versatile tool that enables you to create and share custom command-based packages.";
-            overlayHeader.credits = "Special thanks to B3711, ComplexNarrative, Faker_dev, MasaGratoR, meha, WerWolv, HookedBehemoth and many others. ♥";
+            overlayHeader.credits = "Special thanks to B3711, ComplexNarrative, ssky, MasaGratoR, meha, WerWolv, HookedBehemoth and many others. ♥";
             addPackageInfo(list, overlayHeader, OVERLAY_STR);
             overlayHeader.clear();
 
@@ -919,9 +919,13 @@ public:
             //list->addItem(new tsl::elm::ListItem(FAILED_TO_OPEN + ": " + settingsIniPath));
         }
 
-        auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
+        //auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
+        //rootFrame->setContent(list.release());
+        //return rootFrame.release();
+
+        auto rootFrame = new tsl::elm::OverlayFrame(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
         rootFrame->setContent(list.release());
-        return rootFrame.release();
+        return rootFrame;
 
         //return returnRootFrame(list, CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
     }
@@ -1306,9 +1310,13 @@ public:
             addBasicListItem(list, FAILED_TO_OPEN + ": " + settingsIniPath);
         }
     
-        auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
+        //auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
+        //rootFrame->setContent(list.release());
+        //return rootFrame.release();
+
+        auto rootFrame = new tsl::elm::OverlayFrame(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
         rootFrame->setContent(list.release());
-        return rootFrame.release();
+        return rootFrame;
     }
     
     
@@ -1541,6 +1549,7 @@ public:
         bool noClickableItems = false;
         if (!tableMode) {
             size_t index = 0, tryCount = 0;
+            std::string combinedCommand;
             // If not in table mode, loop through commands and display each command as a list item
             for (const auto& command : commands) {
                 if (index == 0 && command[0] != "try:" && command[0] != "on:" && command[0] != "off:") {
@@ -1562,7 +1571,7 @@ public:
                     addHeader(list, specificKey+" ("+OFF+")");
                     continue;
                 }
-                std::string combinedCommand = joinCommands(command); // Join commands into a single line for display
+                combinedCommand = joinCommands(command); // Join commands into a single line for display
                 addListItem(list, combinedCommand);
                 index++;
             }
@@ -1614,11 +1623,18 @@ public:
 
         std::string packageVersion = isFromMainMenu ? "" : packageRootLayerVersion;
         
-        auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(packageName,
-            !lastPackageHeader.empty() ? lastPackageHeader + "?Ultrahand Script" : (packageVersion.empty() ? CAPITAL_ULTRAHAND_PROJECT_NAME + " Script" : packageVersion + "   (" + CAPITAL_ULTRAHAND_PROJECT_NAME + " Script)"),
-            noClickableItems);
+        //auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(packageName,
+        //    !lastPackageHeader.empty() ? lastPackageHeader + "?Ultrahand Script" : (packageVersion.empty() ? CAPITAL_ULTRAHAND_PROJECT_NAME + " Script" : packageVersion + "   (" + CAPITAL_ULTRAHAND_PROJECT_NAME + " Script)"),
+        //    noClickableItems);
+        //rootFrame->setContent(list.release());
+        //return rootFrame.release();
+
+
+        auto rootFrame = new tsl::elm::OverlayFrame(packageName,
+           !lastPackageHeader.empty() ? lastPackageHeader + "?Ultrahand Script" : (packageVersion.empty() ? CAPITAL_ULTRAHAND_PROJECT_NAME + " Script" : packageVersion + "   (" + CAPITAL_ULTRAHAND_PROJECT_NAME + " Script)"),
+           noClickableItems);
         rootFrame->setContent(list.release());
-        return rootFrame.release();
+        return rootFrame;
     }
 
     virtual bool handleInput(u64 keysDown, u64 keysHeld, touchPosition touchInput, JoystickPosition leftJoyStick, JoystickPosition rightJoyStick) override {
@@ -1686,8 +1702,9 @@ private:
         }
     
         // Regular command processing
+        std::string argument;
         for (const auto& part : commandParts) {
-            std::string argument = part;
+            argument = part;
 
             // If the argument is exactly '', skip processing (preserve the empty quotes)
             if (argument == "") {
@@ -1794,6 +1811,8 @@ public:
         std::string filterEntry;
         std::vector<std::string> newFiles, newFilesOn, newFilesOff;
 
+        std::vector<std::string> matchedFiles;
+
         // Create a map with all non-button/arrow placeholders and their replacements
         std::unordered_map<std::string, std::string> generalPlaceholders = {
             {"{ram_vendor}", memoryVendor},
@@ -1889,7 +1908,7 @@ public:
                         }
 
                         if (filterEntry.find('*') != std::string::npos) {
-                            std::vector<std::string> matchedFiles = getFilesListByWildcards(filterEntry);
+                            matchedFiles = getFilesListByWildcards(filterEntry);
                             for (const auto& file : matchedFiles) {
                                 if (currentSection == GLOBAL_STR)
                                     filterList.push_back(file);
@@ -2476,20 +2495,36 @@ public:
             packageHeader.color = packageRootLayerColor;
         
 
-        auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(
-            (!packageHeader.title.empty()) ? packageHeader.title : (!packageRootLayerTitle.empty() ? packageRootLayerTitle : getNameFromPath(filePath)),
-            !lastPackageHeader.empty() ? lastPackageHeader : (packageHeader.version != "" ? (!packageRootLayerVersion.empty() ? packageRootLayerVersion : packageHeader.version) + "   (Ultrahand Package)" : "Ultrahand Package"),
-            noClickableItems,
-            "",
-            packageHeader.color);
+        //auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(
+        //    (!packageHeader.title.empty()) ? packageHeader.title : (!packageRootLayerTitle.empty() ? packageRootLayerTitle : getNameFromPath(filePath)),
+        //    !lastPackageHeader.empty() ? lastPackageHeader : (packageHeader.version != "" ? (!packageRootLayerVersion.empty() ? packageRootLayerVersion : packageHeader.version) + "   (Ultrahand Package)" : "Ultrahand Package"),
+        //    noClickableItems,
+        //    "",
+        //    packageHeader.color);
+        //
+        //if (filePath == PACKAGE_PATH)
+        //    rootFrame = std::make_unique<tsl::elm::OverlayFrame>(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
+        //
+        ////ist->setAutoJumpTarget(CHECKMARK_SYMBOL);
+        //rootFrame->setContent(list.release());
+        //
+        //return rootFrame.release();
 
-        if (filePath == PACKAGE_PATH)
-            rootFrame = std::make_unique<tsl::elm::OverlayFrame>(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
-
-        //ist->setAutoJumpTarget(CHECKMARK_SYMBOL);
+        tsl::elm::OverlayFrame* rootFrame;
+        
+        if (filePath == PACKAGE_PATH) {
+           rootFrame = new tsl::elm::OverlayFrame(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
+        } else {
+           rootFrame = new tsl::elm::OverlayFrame(
+               (!packageHeader.title.empty()) ? packageHeader.title : (!packageRootLayerTitle.empty() ? packageRootLayerTitle : getNameFromPath(filePath)),
+               !lastPackageHeader.empty() ? lastPackageHeader : (packageHeader.version != "" ? (!packageRootLayerVersion.empty() ? packageRootLayerVersion : packageHeader.version) + "   (Ultrahand Package)" : "Ultrahand Package"),
+               noClickableItems,
+               "",
+               packageHeader.color);
+        }
+        
         rootFrame->setContent(list.release());
-
-        return rootFrame.release();
+        return rootFrame;
 
 
         //if (filePath == PACKAGE_PATH)
@@ -2633,57 +2668,77 @@ public:
 std::vector<std::vector<std::string>> gatherPromptCommands(
     const std::string& dropdownSection,
     const std::vector<std::pair<std::string, std::vector<std::vector<std::string>>>>& options) {
-
+    
     std::vector<std::vector<std::string>> promptCommands;
-    bool inRelevantSection = false;  // Tracks if we are within the desired section
-
+    promptCommands.reserve(options.size()); // Reserve space to avoid reallocations
+    
+    bool inRelevantSection = false;
     bool isFirstSection = true;
+    
+    // Pre-define vectors outside loop to avoid repeated allocations
+    std::vector<std::string> fillerCommand;
+    std::vector<std::string> sectionCommand;
+    std::vector<std::string> fullCmd;
+    std::vector<std::string> splitParts;
+    
+    // Pre-allocate filler command (whitespace)
+    fillerCommand.reserve(1);
+    fillerCommand.push_back("\u00A0");
+    
     for (const auto& nextOption : options) {
+        const std::string& sectionName = nextOption.first;
+        const std::vector<std::vector<std::string>>& commands = nextOption.second;
+        
         // Check if this is the start of the relevant section
-        if (nextOption.first == dropdownSection) {
-            inRelevantSection = true;  // Start gathering commands
+        if (sectionName == dropdownSection) {
+            inRelevantSection = true;
             continue;
         }
-
-        // Stop capturing if we encounter a new section with no commands (empty section like [Commands])
-        if (inRelevantSection && nextOption.second.empty()) {
-            break;  // Stop when encountering an empty section
+        
+        // Stop capturing if we encounter a new section with no commands (empty section)
+        if (inRelevantSection && commands.empty()) {
+            break;
         }
-
+        
         // Gather commands if we are in the relevant section
         if (inRelevantSection) {
-            // Treat the current section name as a command if it's a section header (i.e., capture it with brackets)
-            if (!nextOption.first.empty()) {
-
+            // Add section header as a command (with brackets)
+            if (!sectionName.empty()) {
                 if (!isFirstSection) {
-                    std::vector<std::string> fillerCommand = {"\u00A0"}; // whitespace
-                    promptCommands.push_back(fillerCommand);  // Add the section header as a command
-                }
-                else if (isFirstSection) {
+                    promptCommands.push_back(fillerCommand); // Add whitespace separator
+                } else {
                     isFirstSection = false;
                 }
-                std::vector<std::string> sectionCommand = {"[" + nextOption.first + "]"};
-                promptCommands.push_back(sectionCommand);  // Add the section header as a command
+                
+                // Clear and prepare section command
+                sectionCommand.clear();
+                sectionCommand.reserve(1);
+                sectionCommand.push_back("[" + sectionName + "]");
+                promptCommands.push_back(sectionCommand);
             }
-
-            // Process and split each command by spaces
-            for (const auto& cmd : nextOption.second) {
-                std::vector<std::string> fullCmd;
+            
+            // Process each command by splitting on spaces
+            for (const auto& cmd : commands) {
+                fullCmd.clear();
+                
                 for (const auto& part : cmd) {
-                    auto splitParts = splitString(part, " ");
-                    fullCmd.insert(fullCmd.end(), splitParts.begin(), splitParts.end());  // Collect all parts of the command
+                    splitParts = splitString(part, " ");
+                    fullCmd.insert(fullCmd.end(), splitParts.begin(), splitParts.end());
                 }
-                promptCommands.push_back(fullCmd);  // Add the full command
+                
+                if (!fullCmd.empty()) {
+                    promptCommands.push_back(fullCmd);
+                }
             }
         }
     }
-
+    
     // Return placeholder if no commands are found
     if (promptCommands.empty()) {
-        //promptCommands = {{"No", "commands", "for", dropdownSection+"."}};
-        promptCommands = {{UNAVAILABLE_SELECTION}};
+        promptCommands.reserve(1);
+        promptCommands.push_back({UNAVAILABLE_SELECTION});
     }
-
+    
     return promptCommands;
 }
 
@@ -3978,19 +4033,33 @@ public:
         if (packageHeader.color.empty())
             packageHeader.color = packageRootLayerColor;
         
-        std::unique_ptr<tsl::elm::OverlayFrame> rootFrame = std::make_unique<tsl::elm::OverlayFrame>(
-            (!packageHeader.title.empty()) ? packageHeader.title : (!packageRootLayerTitle.empty() ? packageRootLayerTitle : getNameFromPath(packagePath)),
-            ((!pageHeader.empty() && packageHeader.show_version != TRUE_STR) ? pageHeader: (packageHeader.version != "" ? (!packageRootLayerVersion.empty() ? packageRootLayerVersion : packageHeader.version) + "   (Ultrahand Package)" : "Ultrahand Package")),
-            noClickableItems,
-            "",
-            packageHeader.color,
-            (usingPages && currentPage == RIGHT_STR) ? pageLeftName : "",
-            (usingPages && currentPage == LEFT_STR) ? pageRightName : ""
+        //std::unique_ptr<tsl::elm::OverlayFrame> rootFrame = std::make_unique<tsl::elm::OverlayFrame>(
+        //    (!packageHeader.title.empty()) ? packageHeader.title : (!packageRootLayerTitle.empty() ? packageRootLayerTitle : getNameFromPath(packagePath)),
+        //    ((!pageHeader.empty() && packageHeader.show_version != TRUE_STR) ? pageHeader: (packageHeader.version != "" ? (!packageRootLayerVersion.empty() ? packageRootLayerVersion : packageHeader.version) + "   (Ultrahand Package)" : "Ultrahand Package")),
+        //    noClickableItems,
+        //    "",
+        //    packageHeader.color,
+        //    (usingPages && currentPage == RIGHT_STR) ? pageLeftName : "",
+        //    (usingPages && currentPage == LEFT_STR) ? pageRightName : ""
+        //);
+        //
+        //rootFrame->setContent(list.release());
+        //
+        //return rootFrame.release();
+
+        auto rootFrame = new tsl::elm::OverlayFrame(
+           (!packageHeader.title.empty()) ? packageHeader.title : (!packageRootLayerTitle.empty() ? packageRootLayerTitle : getNameFromPath(packagePath)),
+           ((!pageHeader.empty() && packageHeader.show_version != TRUE_STR) ? pageHeader: (packageHeader.version != "" ? (!packageRootLayerVersion.empty() ? packageRootLayerVersion : packageHeader.version) + "   (Ultrahand Package)" : "Ultrahand Package")),
+           noClickableItems,
+           "",
+           packageHeader.color,
+           (usingPages && currentPage == RIGHT_STR) ? pageLeftName : "",
+           (usingPages && currentPage == LEFT_STR) ? pageRightName : ""
         );
         
         rootFrame->setContent(list.release());
         
-        return rootFrame.release();
+        return rootFrame;
 
 
         //return returnRootFrame(list,
@@ -5203,11 +5272,17 @@ public:
         
         filesList.clear();
     
-        auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel, noClickableItems, menuMode+hiddenMenuMode+dropdownSection, "", "", "");
+        //auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel, noClickableItems, menuMode+hiddenMenuMode+dropdownSection, "", "", "");
+        //
+        //rootFrame->setContent(list.release());
+        //
+        //return rootFrame.release();
+
+        auto rootFrame = new tsl::elm::OverlayFrame(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel, noClickableItems, menuMode+hiddenMenuMode+dropdownSection, "", "", "");
         
         rootFrame->setContent(list.release());
         
-        return rootFrame.release();
+        return rootFrame;
     }
 
 
