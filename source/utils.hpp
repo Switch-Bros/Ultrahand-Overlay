@@ -1307,8 +1307,8 @@ void drawTable(
     std::vector<std::string>&             sectionLines,
     std::vector<std::string>&             infoLines,
     size_t columnOffset             = 163,
-    size_t startGap                 = 19-2,
-    size_t endGap                   = 6,
+    size_t startGap                 = 19,
+    size_t endGap                   = 9,
     size_t newlineGap               = 4,
     const std::string& tableSectionTextColor       = DEFAULT_STR,
     const std::string& tableInfoTextColor          = DEFAULT_STR,
@@ -1324,22 +1324,45 @@ void drawTable(
 ) {
     // Helper for raw colors
     auto getRawColor = [](const std::string& c, auto def) {
-        if (c=="warning")    return tsl::warningTextColor;
-        if (c=="text")       return tsl::defaultTextColor;
-        if (c=="on_value")   return tsl::onTextColor;
-        if (c=="off_value")  return tsl::offTextColor;
-        if (c=="header")     return tsl::headerTextColor;
-        if (c=="info")       return tsl::infoTextColor;
-        if (c=="section")    return tsl::sectionTextColor;
-        if (c=="healthy_ram")return tsl::healthyRamTextColor;
-        if (c=="neutral_ram")return tsl::neutralRamTextColor;
-        if (c=="bad_ram")    return tsl::badRamTextColor;
-        return (c==DEFAULT_STR) ? def : tsl::RGB888(c);
+        // Check most common/special case first
+        if (c == DEFAULT_STR) return def;
+        
+        // Quick length check to eliminate impossible matches
+        const size_t len = c.length();
+        
+        // Group by length to reduce comparisons
+        switch (len) {
+            case 4:
+                if (c == "text") return tsl::defaultTextColor;
+                if (c == "info") return tsl::infoTextColor;
+                break;
+                
+            case 6:
+                if (c == "header") return tsl::headerTextColor;
+                break;
+                
+            case 7:
+                if (c[0] == 'w' && c == "warning") return tsl::warningTextColor;
+                if (c[0] == 's' && c == "section") return tsl::sectionTextColor;
+                if (c[0] == 'b' && c == "bad_ram") return tsl::badRamTextColor;
+                break;
+                
+            case 8:
+                if (c == "on_value") return tsl::onTextColor;
+                break;
+                
+            case 9:
+                if (c == "off_value") return tsl::offTextColor;
+                break;
+                
+            case 11:
+                if (c[0] == 'h' && c == "healthy_ram") return tsl::healthyRamTextColor;
+                if (c[0] == 'n' && c == "neutral_ram") return tsl::neutralRamTextColor;
+                break;
+        }
+        
+        return tsl::RGB888(c);
     };
-
-    const auto secRaw    = getRawColor(tableSectionTextColor,   tsl::sectionTextColor);
-    const auto infoRaw   = getRawColor(tableInfoTextColor,      tsl::infoTextColor);
-    const auto hiliteRaw = getRawColor(tableInfoTextHighlightColor, tsl::infoTextColor);
 
     // Prebuild initial buffers
     std::vector<std::string> cacheExpSec, cacheExpInfo;
@@ -1378,6 +1401,10 @@ void drawTable(
             if (useHeaderIndent) {
                 renderer->drawRect(x-2, y, 4, 22, renderer->a(tsl::headerSeparatorColor));
             }
+
+            const auto secRaw    = getRawColor(tableSectionTextColor,   tsl::sectionTextColor);
+            const auto infoRaw   = getRawColor(tableInfoTextColor,      tsl::infoTextColor);
+            const auto hiliteRaw = getRawColor(tableInfoTextHighlightColor, tsl::infoTextColor);
 
             // Pre-calculate everything, optimize for CPU pipeline
             const bool sameCol = (tableInfoTextColor == tableInfoTextHighlightColor);
@@ -1430,7 +1457,7 @@ void addTable(
     const std::string&                     packagePath,
     const size_t&                          columnOffset                = 163,
     const size_t&                          tableStartGap               = 19,
-    const size_t&                          tableEndGap                 = 10,
+    const size_t&                          tableEndGap                 = 9,
     const size_t&                          tableSpacing                = 0,
     const std::string&                     tableSectionTextColor       = DEFAULT_STR,
     const std::string&                     tableInfoTextColor          = DEFAULT_STR,
@@ -1481,7 +1508,7 @@ void addHelpInfo(std::unique_ptr<tsl::elm::List>& list) {
     std::vector<std::vector<std::string>> dummyTableData;
 
     // Draw the table with the defined lines
-    drawTable(list, dummyTableData, sectionLines, infoLines, xOffset, 19, 10, 4);
+    drawTable(list, dummyTableData, sectionLines, infoLines, xOffset, 19, 9, 4);
     //drawTable(list, sectionLines, infoLines, xOffset, 19, 12, 4, DEFAULT_STR, DEFAULT_STR, LEFT_STR, false, false, true, "none", false);
 }
 
@@ -1564,7 +1591,7 @@ void addPackageInfo(std::unique_ptr<tsl::elm::List>& list, auto& packageHeader, 
 
     // Drawing the table with section lines and info lines
     //drawTable(list, sectionLines, infoLines, xOffset, 20, 12, 3);
-    drawTable(list, dummyTableData, sectionLines, infoLines, xOffset, 19, 10, 3, DEFAULT_STR, DEFAULT_STR, DEFAULT_STR, LEFT_STR, false, false, true);
+    drawTable(list, dummyTableData, sectionLines, infoLines, xOffset, 19, 9, 3, DEFAULT_STR, DEFAULT_STR, DEFAULT_STR, LEFT_STR, false, false, true);
 }
 
 

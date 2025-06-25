@@ -744,7 +744,7 @@ public:
                     }
                     else initializeTheme();
                     tsl::initializeThemeVars();
-                    reloadMenu = reloadMenu2 = true;
+                    //reloadMenu = reloadMenu2 = true;
                     lastSelectedListItem->setValue("");
                     selectedListItem->setValue(DEFAULT);
                     listItemRaw->setValue(CHECKMARK_SYMBOL);
@@ -819,7 +819,7 @@ public:
                     setIniFileValue(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "current_wallpaper", "");
                     deleteFileOrDirectory(WALLPAPER_PATH);
                     reloadWallpaper();
-                    reloadMenu = reloadMenu2 = true;
+                    //reloadMenu = reloadMenu2 = true;
                     lastSelectedListItem->setValue("");
                     selectedListItem->setValue(OPTION_SYMBOL);
                     listItemRaw->setValue(CHECKMARK_SYMBOL);
@@ -941,7 +941,8 @@ public:
                 jumpItemExactMatch = true;
                 g_overlayFilename = "";
                 languageWasChanged = false;
-                list->jumpToItem(jumpItemName, jumpItemValue, jumpItemExactMatch, true);
+                //tsl::elm::s_skipFrame = true;
+                list->jumpToItem(jumpItemName, jumpItemValue, jumpItemExactMatch);
             } else {
                 jumpItemName = "";
                 jumpItemValue = "";
@@ -1016,12 +1017,18 @@ public:
                 allowSlide = unlockedSlide = false;
                 inSubSettingsMenu = false;
                 returningToSettings = true;
-                tsl::goBack();
+                
+                
 
                 if (reloadMenu2) {
-                    tsl::goBack();
+                    tsl::elm::skipDeconstruction = true;
+                    tsl::goBack(2);
+                    tsl::elm::skipDeconstruction = false;
                     tsl::changeTo<UltrahandSettingsMenu>();
                     reloadMenu2 = false;
+                    //languageWasChanged = false;
+                } else {
+                    tsl::goBack();
                 }
                 simulatedBackComplete = true;
                 return true;
@@ -1352,7 +1359,7 @@ public:
             jumpItemExactMatch = true;
             g_overlayFilename = "";
         } else {
-            jumpItemName = NULL_STR;
+            jumpItemName = "🗿";;
             jumpItemValue = "";
             jumpItemExactMatch = true;
             g_overlayFilename = "";
@@ -1637,7 +1644,7 @@ public:
             // Use default parameters for the table view
             const size_t tableColumnOffset = 163;
             const size_t tableStartGap = 19;
-            const size_t tableEndGap = 10;
+            const size_t tableEndGap = 9;
             const size_t tableSpacing = 10;
             const std::string tableSectionTextColor = DEFAULT_STR;
             const std::string tableInfoTextColor = DEFAULT_STR;
@@ -1652,13 +1659,13 @@ public:
             //const bool usingTopPivot = true;
             //const bool usingBottomPivot = false;
 
-            std::vector<std::vector<std::string>> dummyTableData;
+            static std::vector<std::vector<std::string>> dummyTableData;
 
             addDummyListItem(list);
             // Draw the table using the sectionLines and empty infoLines
             drawTable(list, dummyTableData, sectionLines, infoLines, tableColumnOffset, tableStartGap, tableEndGap, tableSpacing,
                       tableSectionTextColor, tableInfoTextColor, tableInfoTextColor, tableAlignment, hideTableBackground, useHeaderIndent, isPolling, isScrollableTable, wrappingMode, useWrappedTextIndent);
-            addDummyListItem(list);
+            //addDummyListItem(list);
             //if (usingBottomPivot) {
             //    addDummyListItem(list);
             //    //lastItemIsScrollableTable = false;
@@ -2917,7 +2924,7 @@ bool drawCommandsMenu(std::unique_ptr<tsl::elm::List>& list,
         hideTableBackground = false;
         useHeaderIndent = false;
         tableStartGap = 19-2;
-        tableEndGap = 10;
+        tableEndGap = 9;
         tableColumnOffset = 163;
         tableSpacing = 0;
         tableSectionTextColor = DEFAULT_STR;
@@ -3091,7 +3098,7 @@ bool drawCommandsMenu(std::unique_ptr<tsl::elm::List>& list,
                                     inPackageMenu = false;
                                     selectedListItem.reset();
                                     lastSelectedListItem.reset();
-                                    //jumpItemName = NULL_STR;
+                                    //jumpItemName = "🗿";;
                                     //jumpItemValue = "";
                                     //jumpItemExactMatch = true;
                                     //g_overlayFilename = "";
@@ -3127,7 +3134,7 @@ bool drawCommandsMenu(std::unique_ptr<tsl::elm::List>& list,
                                 }
                                 if (keys & KEY_A) {
                                     inPackageMenu = false;
-                                    //jumpItemName = NULL_STR;
+                                    //jumpItemName = "🗿";;
                                     //jumpItemValue = "";
                                     //jumpItemExactMatch = true;
                                     //g_overlayFilename = "";
@@ -3760,7 +3767,7 @@ bool drawCommandsMenu(std::unique_ptr<tsl::elm::List>& list,
                                 lastKeyName = keyName;
 
                                 allowSlide = unlockedSlide = false;
-                                //jumpItemName = NULL_STR;
+                                //jumpItemName = "🗿";;
                                 //jumpItemValue = "";
                                 //jumpItemExactMatch = true;
                                 //g_overlayFilename = "";
@@ -4023,7 +4030,7 @@ bool drawCommandsMenu(std::unique_ptr<tsl::elm::List>& list,
         //auto dummyItem = new tsl::elm::DummyListItem();
         //list->addItem(dummyItem, 0, 1);
         addDummyListItem(list, 1); // assuming a header is always above
-        addDummyListItem(list);
+        //addDummyListItem(list);
     }
 
     //if (lastItemIsScrollableTable) {
@@ -5481,7 +5488,10 @@ public:
         //return rootFrame.release();
 
         auto rootFrame = new tsl::elm::OverlayFrame(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel, noClickableItems, menuMode+hiddenMenuMode+dropdownSection, "", "", "");
-        list->jumpToItem(jumpItemName, jumpItemValue, jumpItemExactMatch);
+        if (g_overlayFilename != "ovlmenu.ovl")
+            list->jumpToItem(jumpItemName, jumpItemValue, jumpItemExactMatch);
+        else
+            g_overlayFilename = "";
         rootFrame->setContent(list.release());
         
         return rootFrame;
