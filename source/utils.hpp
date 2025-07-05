@@ -34,7 +34,7 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
-#include <regex>
+//#include <regex>
 //#include <sys/statvfs.h>
 
 
@@ -697,6 +697,7 @@ static std::string resolveWildcardFromKnownPath(
 
     for (size_t startPos = 0; startPos <= resolvedPath.size(); ++startPos) {
         captures.clear();
+        captures.shrink_to_fit();
         subPath = resolvedPath.substr(startPos);
         
         if (matchAndExtract(oldPattern, subPath, captures)) {
@@ -1111,6 +1112,7 @@ std::vector<std::string> wrapText(const std::string& text, float maxWidth, const
             if (tsl::gfx::calculateStringWidth(currentLine, fontSize, false) > currentMaxWidth) {
                 wrappedLines.push_back(((firstLine && useIndent) || !useIndent) ? currentLine : indent + currentLine);  // Indent if not the first line
                 currentLine.clear();  // Start a new line
+                currentLine.shrink_to_fit();
                 firstLine = false;
             }
             i++;
@@ -1125,6 +1127,7 @@ std::vector<std::string> wrapText(const std::string& text, float maxWidth, const
             if (tsl::gfx::calculateStringWidth(currentLine + currentWord, fontSize, false) > currentMaxWidth) {
                 wrappedLines.push_back(((firstLine && useIndent) || !useIndent) ? currentLine : indent + currentLine);  // Add the current line
                 currentLine.clear();  // Start a new line with the current word
+                currentLine.shrink_to_fit();
                 firstLine = false;
             }
 
@@ -1167,9 +1170,13 @@ static bool buildTableDrawerLines(
     const float indentWidth = tsl::gfx::calculateStringWidth(indent, fontSize, false);
 
     outSection.clear();
+    outSection.shrink_to_fit();
     outInfo.clear();
+    outInfo.shrink_to_fit();
     outY.clear();
+    outY.shrink_to_fit();
     outX.clear();
+    outX.shrink_to_fit();
 
     size_t curY = startGap;
     bool anyReplacementsMade = false;
@@ -1179,13 +1186,14 @@ static bool buildTableDrawerLines(
         std::string infoText;
         int xPos;
         float infoWidth;
+        std::vector<std::string> wrappedLines;
         for (size_t i = 0; i < lines.size(); ++i) {
             const std::string& baseText = lines[i];
             const std::string& infoTextRaw = (i < infos.size()) ? infos[i] : "";
             infoText = (infoTextRaw.find(NULL_STR) != std::string::npos) ? UNAVAILABLE_SELECTION : infoTextRaw;
 
             // Wrap the base text according to wrappingMode and indent params
-            auto wrappedLines = wrapText(
+            wrappedLines = wrapText(
                 baseText,
                 xMax - 22,
                 wrappingMode,
@@ -1301,13 +1309,55 @@ static bool buildTableDrawerLines(
 }
 
 
+// Helper function moved outside - no lambda creation overhead
+static tsl::Color getRawColor(const std::string& c, tsl::Color defaultColor) {
+    // Check most common/special case first
+    if (c == DEFAULT_STR) return defaultColor;
+    
+    // Quick length check to eliminate impossible matches
+    const size_t len = c.length();
+    
+    // Group by length to reduce comparisons
+    switch (len) {
+        case 4:
+            if (c == "text") return tsl::defaultTextColor;
+            if (c == "info") return tsl::infoTextColor;
+            break;
+            
+        case 6:
+            if (c == "header") return tsl::headerTextColor;
+            break;
+            
+        case 7:
+            if (c[0] == 'w' && c == "warning") return tsl::warningTextColor;
+            if (c[0] == 's' && c == "section") return tsl::sectionTextColor;
+            if (c[0] == 'b' && c == "bad_ram") return tsl::badRamTextColor;
+            break;
+            
+        case 8:
+            if (c == "on_value") return tsl::onTextColor;
+            break;
+            
+        case 9:
+            if (c == "off_value") return tsl::offTextColor;
+            break;
+            
+        case 11:
+            if (c[0] == 'h' && c == "healthy_ram") return tsl::healthyRamTextColor;
+            if (c[0] == 'n' && c == "neutral_ram") return tsl::neutralRamTextColor;
+            break;
+    }
+    
+    return tsl::RGB888(c);
+}
+
 void drawTable(
-    std::unique_ptr<tsl::elm::List>&      list,
+    tsl::elm::List*      list,
     std::vector<std::vector<std::string>>& tableData,
     std::vector<std::string>&             sectionLines,
     std::vector<std::string>&             infoLines,
     size_t columnOffset             = 163,
-    size_t startGap                 = 19,
+    size_t startGap                 = 20,
     size_t endGap                   = 9,
     size_t newlineGap               = 4,
     const std::string& tableSectionTextColor       = DEFAULT_STR,
@@ -1322,48 +1372,6 @@ void drawTable(
     bool useWrappedTextIndent        = false,
     std::string packagePath          = ""
 ) {
-    // Helper for raw colors
-    auto getRawColor = [](const std::string& c, auto def) {
-        // Check most common/special case first
-        if (c == DEFAULT_STR) return def;
-        
-        // Quick length check to eliminate impossible matches
-        const size_t len = c.length();
-        
-        // Group by length to reduce comparisons
-        switch (len) {
-            case 4:
-                if (c == "text") return tsl::defaultTextColor;
-                if (c == "info") return tsl::infoTextColor;
-                break;
-                
-            case 6:
-                if (c == "header") return tsl::headerTextColor;
-                break;
-                
-            case 7:
-                if (c[0] == 'w' && c == "warning") return tsl::warningTextColor;
-                if (c[0] == 's' && c == "section") return tsl::sectionTextColor;
-                if (c[0] == 'b' && c == "bad_ram") return tsl::badRamTextColor;
-                break;
-                
-            case 8:
-                if (c == "on_value") return tsl::onTextColor;
-                break;
-                
-            case 9:
-                if (c == "off_value") return tsl::offTextColor;
-                break;
-                
-            case 11:
-                if (c[0] == 'h' && c == "healthy_ram") return tsl::healthyRamTextColor;
-                if (c[0] == 'n' && c == "neutral_ram") return tsl::neutralRamTextColor;
-                break;
-        }
-        
-        return tsl::RGB888(c);
-    };
-
     // Prebuild initial buffers
     std::vector<std::string> cacheExpSec, cacheExpInfo;
     std::vector<s32>         cacheYOff;
@@ -1376,9 +1384,19 @@ void drawTable(
         cacheExpSec, cacheExpInfo, cacheYOff, cacheXOff
     ) && isPolling;
 
+    // Resolve colors once outside the render loop
+    const auto secRaw = getRawColor(tableSectionTextColor, tsl::sectionTextColor);
+    const auto infoRaw = getRawColor(tableInfoTextColor, tsl::infoTextColor);
+    const auto hiliteRaw = getRawColor(tableInfoTextHighlightColor, tsl::infoTextColor);
+    
+    // Pre-calculate color comparison
+    const bool sameCol = (tableInfoTextColor == tableInfoTextHighlightColor);
+
     // Use nanoseconds for high-performance timing
     auto lastUpdateNS = std::make_shared<u64>(armTicksToNs(armGetSystemTick()));
-    constexpr u64 ONE_SECOND_NS = 1000000000ULL; // 1 billion nanoseconds = 1 second
+    constexpr u64 ONE_SECOND_NS = 1000000000ULL;
+
+    static const std::vector<std::string> specialCharacters =  {""};
     
     list->addItem(new tsl::elm::TableDrawer(
         [=](tsl::gfx::Renderer* renderer, s32 x, s32 y, s32 w, s32 h) mutable {
@@ -1399,39 +1417,31 @@ void drawTable(
 
             // Minimal branching, maximum cache efficiency
             if (useHeaderIndent) {
-                renderer->drawRect(x-2, y, 4, 22, renderer->a(tsl::headerSeparatorColor));
+                renderer->drawRect(x-2, y, 4, 22, (tsl::headerSeparatorColor));
             }
 
-            const auto secRaw    = getRawColor(tableSectionTextColor,   tsl::sectionTextColor);
-            const auto infoRaw   = getRawColor(tableInfoTextColor,      tsl::infoTextColor);
-            const auto hiliteRaw = getRawColor(tableInfoTextHighlightColor, tsl::infoTextColor);
-
-            // Pre-calculate everything, optimize for CPU pipeline
-            const bool sameCol = (tableInfoTextColor == tableInfoTextHighlightColor);
+            // Convert to renderer colors once per frame
+            const auto secColor = renderer->a(secRaw);
+            const auto infoColor = renderer->a(infoRaw);
+            const auto dividerColor = renderer->a(tsl::separatorColor);
+            
             const size_t count = cacheExpSec.size();
+            const s32 baseX = x + 12;
             
             if (sameCol) {
                 // Fastest path: same colors, minimal function calls
-                const auto secColor = renderer->a(secRaw);
-                const auto infoColor = renderer->a(infoRaw);
-                const s32 baseX = x + 12;
-                
-                // Tight loop optimized for CPU cache
                 for (size_t i = 0; i < count; ++i) {
                     const s32 yPos = y + cacheYOff[i];
-                    renderer->drawString(cacheExpSec[i], false, baseX, yPos, 16, secColor);
-                    renderer->drawString(cacheExpInfo[i], false, x + cacheXOff[i], yPos, 16, infoColor);
+                    renderer->drawStringWithColoredSections(cacheExpSec[i], false, specialCharacters, baseX, yPos, 16, secColor, dividerColor);
+                    renderer->drawStringWithColoredSections(cacheExpInfo[i], false, specialCharacters, x + cacheXOff[i], yPos, 16, infoColor, dividerColor);
                 }
             } else {
-                // Still fast path for different colors
-                const auto secColor = renderer->a(secRaw);
-                const auto infoColor = renderer->a(infoRaw);
+                // Different colors path
                 const auto hiliteColor = renderer->a(hiliteRaw);
-                const s32 baseX = x + 12;
                 
                 for (size_t i = 0; i < count; ++i) {
                     const s32 yPos = y + cacheYOff[i];
-                    renderer->drawString(cacheExpSec[i], false, baseX, yPos, 16, secColor);
+                    renderer->drawStringWithColoredSections(cacheExpSec[i], false, specialCharacters, baseX, yPos, 16, secColor, dividerColor);
                     renderer->drawStringWithHighlight(
                         cacheExpInfo[i], false, x + cacheXOff[i], yPos, 16,
                         infoColor, hiliteColor
@@ -1452,11 +1462,11 @@ void drawTable(
 
 // ─── addTable simply forwards through ───────────────────────────────────────────
 void addTable(
-    std::unique_ptr<tsl::elm::List>&       list,
+    tsl::elm::List*       list,
     std::vector<std::vector<std::string>>& tableData,
     const std::string&                     packagePath,
     const size_t&                          columnOffset                = 163,
-    const size_t&                          tableStartGap               = 19,
+    const size_t&                          tableStartGap               = 20,
     const size_t&                          tableEndGap                 = 9,
     const size_t&                          tableSpacing                = 0,
     const std::string&                     tableSectionTextColor       = DEFAULT_STR,
@@ -1483,7 +1493,7 @@ void addTable(
 }
 
 
-void addHelpInfo(std::unique_ptr<tsl::elm::List>& list) {
+void addHelpInfo(tsl::elm::List* list) {
     // Add a section break with small text to indicate the "Commands" section
     addHeader(list, USER_GUIDE);
 
@@ -1508,13 +1518,13 @@ void addHelpInfo(std::unique_ptr<tsl::elm::List>& list) {
     std::vector<std::vector<std::string>> dummyTableData;
 
     // Draw the table with the defined lines
-    drawTable(list, dummyTableData, sectionLines, infoLines, xOffset, 19, 9, 4);
+    drawTable(list, dummyTableData, sectionLines, infoLines, xOffset, 20, 9, 4);
     //drawTable(list, sectionLines, infoLines, xOffset, 19, 12, 4, DEFAULT_STR, DEFAULT_STR, LEFT_STR, false, false, true, "none", false);
 }
 
 
 
-void addPackageInfo(std::unique_ptr<tsl::elm::List>& list, auto& packageHeader, std::string type = PACKAGE_STR) {
+void addPackageInfo(tsl::elm::List* list, auto& packageHeader, std::string type = PACKAGE_STR) {
     // Add a section break with small text to indicate the "Commands" section
     addHeader(list, (type == PACKAGE_STR ? PACKAGE_INFO : OVERLAY_INFO));
 
@@ -1591,7 +1601,7 @@ void addPackageInfo(std::unique_ptr<tsl::elm::List>& list, auto& packageHeader, 
 
     // Drawing the table with section lines and info lines
     //drawTable(list, sectionLines, infoLines, xOffset, 20, 12, 3);
-    drawTable(list, dummyTableData, sectionLines, infoLines, xOffset, 19, 9, 3, DEFAULT_STR, DEFAULT_STR, DEFAULT_STR, LEFT_STR, false, false, true);
+    drawTable(list, dummyTableData, sectionLines, infoLines, xOffset, 20, 9, 3, DEFAULT_STR, DEFAULT_STR, DEFAULT_STR, LEFT_STR, false, false, true);
 }
 
 
@@ -1766,46 +1776,45 @@ bool isDangerousCombination(const std::string& originalPath) {
 
 
 
+
 // Function to populate selectedItemsListOff from a JSON array based on a key
-void populateSelectedItemsList(const std::string& sourceType, const std::string& jsonStringOrPath, const std::string& jsonKey, std::vector<std::string>& selectedItemsList) {
+void populateSelectedItemsListFromJson(const std::string& sourceType, const std::string& jsonStringOrPath, const std::string& jsonKey, std::vector<std::string>& selectedItemsList) {
     // Check for empty JSON source strings
     if (jsonStringOrPath.empty()) {
         return;
     }
-
     // Use a unique_ptr to manage JSON object with appropriate deleter
-    std::unique_ptr<json_t, void(*)(json_t*)> jsonData(nullptr, json_decref);
-
+    std::unique_ptr<json_t, JsonDeleter> jsonData(nullptr, JsonDeleter());
     // Convert JSON string or read from file based on the source type
     if (sourceType == JSON_STR) {
         jsonData.reset(stringToJson(jsonStringOrPath));
     } else if (sourceType == JSON_FILE_STR) {
         jsonData.reset(readJsonFromFile(jsonStringOrPath));
     }
-
     // Early return if jsonData is null or not an array
-    if (!jsonData || !json_is_array(jsonData.get())) {
+    if (!jsonData) {
         return;
     }
-
+    
+    cJSON* jsonArray = reinterpret_cast<cJSON*>(jsonData.get());
+    if (!cJSON_IsArray(jsonArray)) {
+        return;
+    }
+    
     // Prepare for efficient insertion
-    json_t* jsonArray = jsonData.get();
-    const size_t arraySize = json_array_size(jsonArray);
-    selectedItemsList.reserve(arraySize);
-
+    const int arraySize = cJSON_GetArraySize(jsonArray);
+    //selectedItemsList.reserve(arraySize);
+    
     // Store the key as a const char* to avoid repeated c_str() calls
     const char* jsonKeyCStr = jsonKey.c_str();
-
+    
     // Iterate over the JSON array
-    for (size_t i = 0; i < arraySize; ++i) {
-        auto* item = json_array_get(jsonArray, i);
-        if (json_is_object(item)) {
-            auto* keyValue = json_object_get(item, jsonKeyCStr);
-            if (json_is_string(keyValue)) {
-                const char* value = json_string_value(keyValue);
-                if (value) {
-                    selectedItemsList.emplace_back(value);
-                }
+    for (int i = 0; i < arraySize; ++i) {
+        cJSON* item = cJSON_GetArrayItem(jsonArray, i);
+        if (cJSON_IsObject(item)) {
+            cJSON* keyValue = cJSON_GetObjectItemCaseSensitive(item, jsonKeyCStr);
+            if (cJSON_IsString(keyValue) && keyValue->valuestring) {
+                selectedItemsList.emplace_back(keyValue->valuestring);
             }
         }
     }
@@ -1909,7 +1918,6 @@ void applyReplaceIniPlaceholder(std::string& arg, const std::string& commandName
     }
 }
 
-
 /**
  * @brief Replaces a JSON source placeholder with the actual JSON source.
  *
@@ -1951,7 +1959,7 @@ std::string replaceJsonPlaceholder(const std::string& arg, const std::string& co
         }
 
         nextPos = startPos + searchString.length();
-        json_t* value = jsonDict.get(); // Get the JSON root object
+        cJSON* value = reinterpret_cast<cJSON*>(jsonDict.get()); // Get the JSON root object
         validValue = true;
 
         while (nextPos < endPos && validValue) {
@@ -1961,19 +1969,19 @@ std::string replaceJsonPlaceholder(const std::string& arg, const std::string& co
             }
 
             key = replacement.substr(nextPos, commaPos - nextPos); // Extract the key
-            if (json_is_object(value)) {
-                value = json_object_get(value, key.c_str()); // Navigate through object
-            } else if (json_is_array(value)) {
+            if (cJSON_IsObject(value)) {
+                value = cJSON_GetObjectItemCaseSensitive(value, key.c_str()); // Navigate through object
+            } else if (cJSON_IsArray(value)) {
                 index = std::stoul(key); // Convert key to index for arrays
-                value = json_array_get(value, index);
+                value = cJSON_GetArrayItem(value, index);
             } else {
                 validValue = false; // Set validValue to false if value is neither object nor array
             }
             nextPos = commaPos + 1; // Move next position past the comma
         }
 
-        if (validValue && value && json_is_string(value)) {
-            replacement.replace(startPos, endPos + 2 - startPos, json_string_value(value)); // Replace text
+        if (validValue && value && cJSON_IsString(value) && value->valuestring) {
+            replacement.replace(startPos, endPos + 2 - startPos, value->valuestring); // Replace text
         }
 
         startPos = replacement.find(searchString, endPos + 2); // Find next occurrence
@@ -2037,6 +2045,7 @@ std::vector<std::vector<std::string>> getSourceReplacement(const std::vector<std
     std::string replacement;
 
     std::string path;
+    std::string raw;
 
     for (const auto& cmd : commands) {
         if (cmd.empty()) {
@@ -2044,7 +2053,8 @@ std::vector<std::vector<std::string>> getSourceReplacement(const std::vector<std
         }
 
         modifiedCmd.clear();
-        modifiedCmd.reserve(cmd.size());
+        modifiedCmd.shrink_to_fit();
+        //modifiedCmd.reserve(cmd.size());
         commandName = cmd[0];
 
         if (commandName == "download") {
@@ -2106,7 +2116,7 @@ std::vector<std::vector<std::string>> getSourceReplacement(const std::vector<std
                     endPos   = modifiedArg.find(")}");
                     if (endPos != std::string::npos && endPos > startPos) {
                         // Get the raw value (may be empty)
-                        std::string raw = stringToList(listString)[entryIndex];
+                        raw = stringToList(listString)[entryIndex];
                         // Use returnOrNull to turn empty → NULL_STR
                         replacement = returnOrNull(raw);
                         modifiedArg.replace(startPos, endPos - startPos + 2, replacement);
@@ -2119,7 +2129,7 @@ std::vector<std::vector<std::string>> getSourceReplacement(const std::vector<std
                     startPos = modifiedArg.find("{list_file_source(");
                     endPos   = modifiedArg.find(")}");
                     if (endPos != std::string::npos && endPos > startPos) {
-                        std::string raw = getEntryFromListFile(listPath, entryIndex);
+                        raw = getEntryFromListFile(listPath, entryIndex);
                         replacement = returnOrNull(raw);
                         modifiedArg.replace(startPos, endPos - startPos + 2, replacement);
                     }
@@ -2139,7 +2149,7 @@ std::vector<std::vector<std::string>> getSourceReplacement(const std::vector<std
                     startPos = modifiedArg.find("{json_source(");
                     endPos   = modifiedArg.find(")}");
                     if (endPos != std::string::npos && endPos > startPos) {
-                        std::string raw = replaceJsonPlaceholder(
+                        raw = replaceJsonPlaceholder(
                             modifiedArg.substr(startPos, endPos - startPos + 2),
                             "json_source",
                             jsonString
@@ -2155,7 +2165,7 @@ std::vector<std::vector<std::string>> getSourceReplacement(const std::vector<std
                     startPos = modifiedArg.find("{json_file_source(");
                     endPos   = modifiedArg.find(")}");
                     if (endPos != std::string::npos && endPos > startPos) {
-                        std::string raw = replaceJsonPlaceholder(
+                        raw = replaceJsonPlaceholder(
                             modifiedArg.substr(startPos, endPos - startPos + 2),
                             "json_file_source",
                             jsonPath
@@ -2528,7 +2538,22 @@ bool replacePlaceholdersRecursively(std::string& arg, const std::vector<std::pai
 }
 
 
-
+std::unordered_map<std::string, std::string> generalPlaceholders ;
+void updateGeneralPlaceholders() {
+    generalPlaceholders = {
+        {"{ram_vendor}", memoryVendor},
+        {"{ram_model}", memoryModel},
+        {"{ams_version}", amsVersion},
+        {"{hos_version}", hosVersion},
+        {"{cpu_speedo}", ult::to_string(cpuSpeedo0)},
+        {"{cpu_iddq}", ult::to_string(cpuIDDQ)},
+        {"{gpu_speedo}", ult::to_string(cpuSpeedo2)},
+        {"{gpu_iddq}", ult::to_string(gpuIDDQ)},
+        {"{soc_speedo}", ult::to_string(socSpeedo0)},
+        {"{soc_iddq}", ult::to_string(socIDDQ)},
+        {"{title_id}", getTitleIdAsString()}
+    };
+}
 
 bool applyPlaceholderReplacements(std::vector<std::string>& cmd, const std::string& hexPath, const std::string& iniPath, const std::string& listString, const std::string& listPath, const std::string& jsonString, const std::string& jsonPath) {
     bool replacementsMade = false;
@@ -2704,19 +2729,20 @@ bool applyPlaceholderReplacements(std::vector<std::string>& cmd, const std::stri
         {"{length(", [&](const std::string& placeholder) { return returnOrNull(handleLength(placeholder)); }},
     };
 
-    std::unordered_map<std::string, std::string> generalPlaceholders = {
-        {"{ram_vendor}", memoryVendor},
-        {"{ram_model}", memoryModel},
-        {"{ams_version}", amsVersion},
-        {"{hos_version}", hosVersion},
-        {"{cpu_speedo}", ult::to_string(cpuSpeedo0)},
-        {"{cpu_iddq}", ult::to_string(cpuIDDQ)},
-        {"{gpu_speedo}", ult::to_string(cpuSpeedo2)},
-        {"{gpu_iddq}", ult::to_string(gpuIDDQ)},
-        {"{soc_speedo}", ult::to_string(socSpeedo0)},
-        {"{soc_iddq}", ult::to_string(socIDDQ)},
-        {"{title_id}", getTitleIdAsString()}
-    };
+    //generalPlaceholders = {
+    //    {"{ram_vendor}", memoryVendor},
+    //    {"{ram_model}", memoryModel},
+    //    {"{ams_version}", amsVersion},
+    //    {"{hos_version}", hosVersion},
+    //    {"{cpu_speedo}", ult::to_string(cpuSpeedo0)},
+    //    {"{cpu_iddq}", ult::to_string(cpuIDDQ)},
+    //    {"{gpu_speedo}", ult::to_string(cpuSpeedo2)},
+    //    {"{gpu_iddq}", ult::to_string(gpuIDDQ)},
+    //    {"{soc_speedo}", ult::to_string(socSpeedo0)},
+    //    {"{soc_iddq}", ult::to_string(socIDDQ)},
+    //    {"{title_id}", getTitleIdAsString()}
+    //};
+    updateGeneralPlaceholders();
 
     // Iterate through each command and replace placeholders
     for (auto& arg : cmd) {
@@ -2913,8 +2939,18 @@ bool interpretAndExecuteCommands(std::vector<std::vector<std::string>>&& command
     }
     #endif
 
+    // Increase bufffer size for expanded memory
+    if (expandedMemory) {
+        COPY_BUFFER_SIZE = 262144;
+        HEX_BUFFER_SIZE = 262144;
+        UNZIP_READ_BUFFER = 262144;
+        UNZIP_WRITE_BUFFER = 131072;
+        DOWNLOAD_READ_BUFFER = 262144;
+        DOWNLOAD_WRITE_BUFFER = 131072;
+    }
+
     // Load key-value pairs from the "BUFFERS" section of the INI file
-    auto bufferSection = getKeyValuePairsFromSection(ULTRAHAND_CONFIG_INI_PATH, BUFFERS);
+    auto bufferSection = getKeyValuePairsFromSection(ULTRAHAND_CONFIG_INI_PATH, MEMORY_STR);
     
     if (!bufferSection.empty()) {
         // Directly update buffer sizes without a map
@@ -2924,17 +2960,27 @@ bool interpretAndExecuteCommands(std::vector<std::vector<std::string>>&& command
         if (bufferSection.count(section) > 0) {
             COPY_BUFFER_SIZE = ult::stoi(bufferSection[section]);
         }
-    
-        section = "unzip_buffer_size";
+        
+        section = "unzip_read_buffer";
         if (bufferSection.count(section) > 0) {
-            UNZIP_BUFFER_SIZE = ult::stoi(bufferSection[section]);
+            UNZIP_READ_BUFFER = ult::stoi(bufferSection[section]);
+        }
+
+        section = "unzip_write_buffer";
+        if (bufferSection.count(section) > 0) {
+            UNZIP_WRITE_BUFFER = ult::stoi(bufferSection[section]);
         }
     
-        section = "download_buffer_size";
+        section = "download_read_buffer";
         if (bufferSection.count(section) > 0) {
-            DOWNLOAD_BUFFER_SIZE = ult::stoi(bufferSection[section]);
+            DOWNLOAD_READ_BUFFER = ult::stoi(bufferSection[section]);
         }
-    
+
+        section = "download_write_buffer";
+        if (bufferSection.count(section) > 0) {
+            DOWNLOAD_WRITE_BUFFER = ult::stoi(bufferSection[section]);
+        }
+        
         section = "hex_buffer_size";
         if (bufferSection.count(section) > 0) {
             HEX_BUFFER_SIZE = ult::stoi(bufferSection[section]);
@@ -3721,8 +3767,7 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
         tsl::Overlay::get()->close();
         return;
     } else if (commandName == "back") {
-        simulatedBackComplete = false;
-        simulatedBack = true;
+        simulatedBack.exchange(true, std::memory_order_acq_rel);
     } else if (commandName == "backlight") {
         if (cmd.size() >= 2) {
             std::string togglePattern = cmd[1];
@@ -3970,7 +4015,7 @@ void startInterpreterThread(const std::string& packagePath = "") {
     }
     #endif
 
-    std::string interpreterHeap = parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "interpreter_heap");
+    std::string interpreterHeap = parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, MEMORY_STR, "interpreter_heap");
     if (!interpreterHeap.empty())
         stackSize = ult::stoi(interpreterHeap, nullptr, 16);  // Convert from base 16
 

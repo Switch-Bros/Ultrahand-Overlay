@@ -57,7 +57,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 #---------------------------------------------------------------------------------
 APP_TITLE	:= Ultrahand
 APP_AUTHOR	:= ppkantorski
-APP_VERSION	:= 1.9.7
+APP_VERSION	:= 1.9.9
 TARGET		:= ovlmenu
 BUILD		:= build
 SOURCES		:= source common
@@ -78,8 +78,10 @@ CFLAGS := -g -Wall -Os -ffunction-sections -fdata-sections -flto -fomit-frame-po
 
 CFLAGS += $(INCLUDE) -D__SWITCH__ -DAPP_VERSION="\"$(APP_VERSION)\"" -D_FORTIFY_SOURCE=2
 
-CFLAGS += -DMINIZ_NO_ZLIB_COMPATIBLE_NAMES=1
 
+#---------------------------------------------------------------------------------
+# options for libultrahand
+#---------------------------------------------------------------------------------
 # For compiling Ultrahand Overlay only
 IS_LAUNCHER_DIRECTIVE := 1
 CFLAGS += -DIS_LAUNCHER_DIRECTIVE=$(IS_LAUNCHER_DIRECTIVE)
@@ -93,12 +95,14 @@ USING_LOGGING_DIRECTIVE := 1  # or true
 CFLAGS += -DUSING_LOGGING_DIRECTIVE=$(USING_LOGGING_DIRECTIVE)
 
 # FPS Indicator (for debugging)
-USING_FPS_INDICATOR_DIRECTIVE := 1
+USING_FPS_INDICATOR_DIRECTIVE := 0
 CFLAGS += -DUSING_FPS_INDICATOR_DIRECTIVE=$(USING_FPS_INDICATOR_DIRECTIVE)
 
 # Disable fstream (ideally for other overlays that dont want to use fstream)
-#NO_FSTREAM_DIRECTIVE := 0
-#CFLAGS += -DNO_FSTREAM_DIRECTIVE=$(NO_FSTREAM_DIRECTIVE)
+NO_FSTREAM_DIRECTIVE := 1
+CFLAGS += -DNO_FSTREAM_DIRECTIVE=$(NO_FSTREAM_DIRECTIVE)
+#---------------------------------------------------------------------------------
+
 
 CXXFLAGS := $(CFLAGS) -std=c++23 -Wno-dangling-else -ffast-math -fno-unwind-tables -fno-asynchronous-unwind-tables
 
@@ -106,7 +110,7 @@ ASFLAGS := $(ARCH)
 LDFLAGS += -specs=$(DEVKITPRO)/libnx/switch.specs $(ARCH) -Wl,-Map,$(notdir $*.map)
 
 # Essential libraries for Ultrahand Overlay
-LIBS := -lcurl -lz -lmbedtls -lmbedx509 -lmbedcrypto -ljansson -lnx
+LIBS := -lcurl -lz -lminizip -lmbedtls -lmbedx509 -lmbedcrypto -lnx
 
 CXXFLAGS += -fno-exceptions -ffunction-sections -fdata-sections -fno-rtti
 LDFLAGS += -Wl,--as-needed -Wl,--gc-sections
