@@ -67,10 +67,10 @@ static bool freshSpawn = true;
 //static bool refreshPage = false; //moved to libtesla
 static bool reloadMenu = false;
 static bool reloadMenu2 = false;
-static bool reloadMenu3 = false;
+//static bool reloadMenu3 = false;
 static bool triggerMenuReload = false;
 
-static bool redrawWidget = false;
+
 
 static size_t nestedMenuCount = 0;
 
@@ -488,8 +488,10 @@ private:
             if (iniKey == "clean_version_labels") {
                 versionLabel = APP_VERSION + std::string("   (") + loaderTitle + (actualState ? " v" : " ") + cleanVersionLabel(loaderInfo) + std::string(")");
                 reinitializeVersionLabels();
-            }
-            else if (iniKey == "memory_expansion") {
+                reloadMenu = true;
+            } else if (iniKey == "clean_version_labels" || iniKey == "hide_overlay_versions" || iniKey == "hide_package_versions" || iniKey == "page_swap" || iniKey == "hide_hidden") {
+                reloadMenu = true;
+            } else if (iniKey == "memory_expansion") {
                 if (!isFileOrDirectory(EXPANSION_PATH + "nx-ovlloader.zip")) {
                     if (isVersionGreaterOrEqual(amsVersion,"1.8.0"))
                         downloadFile(NX_OVLLOADER_ZIP_URL, EXPANSION_PATH);
@@ -519,7 +521,6 @@ private:
                 iniKey == "hide_battery" || iniKey == "hide_widget_backdrop" || iniKey == "dynamic_widget_colors" ||
                 iniKey == "center_widget_alignment" || iniKey == "extended_widget_backdrop") {
                 reinitializeWidgetVars();
-                redrawWidget = true;
             } else if (iniKey == "right_alignment") {
                 triggerMenuReload = (rightAlignmentState != actualState);
             } else if (iniKey == "dynamic_logo") {
@@ -528,7 +529,7 @@ private:
                 useOpaqueScreenshots = !useOpaqueScreenshots;
             }
 
-            reloadMenu = true;
+            
             if (useReloadMenu2) reloadMenu2 = true;
         });
         list->addItem(toggleListItem);
@@ -910,17 +911,17 @@ public:
                 list->addItem(listItem);
             }
         } else if (dropdownSelection == "widgetMenu") {
-            addHeader(list, "Widget Items");
+            addHeader(list, WIDGET_ITEMS);
             createToggleListItem(list, CLOCK, hideClock, "hide_clock", true);
             createToggleListItem(list, SOC_TEMPERATURE, hideSOCTemp, "hide_soc_temp", true);
             createToggleListItem(list, PCB_TEMPERATURE, hidePCBTemp, "hide_pcb_temp", true);
             createToggleListItem(list, BATTERY, hideBattery, "hide_battery", true);
             createToggleListItem(list, BACKDROP, hideWidgetBackdrop, "hide_widget_backdrop", true);
 
-            addHeader(list, "Widget Settings");
-            createToggleListItem(list, "Dynamic Colors", dynamicWidgetColors, "dynamic_widget_colors", false);
-            createToggleListItem(list, "Center Alignment", centerWidgetAlignment, "center_widget_alignment", false);
-            createToggleListItem(list, "Extended Backdrop", extendedWidgetBackdrop, "extended_widget_backdrop", false);
+            addHeader(list, WIDGET_SETTINGS);
+            createToggleListItem(list, DYNAMIC_COLORS, dynamicWidgetColors, "dynamic_widget_colors", false);
+            createToggleListItem(list, CENTER_ALIGNMENT, centerWidgetAlignment, "center_widget_alignment", false);
+            createToggleListItem(list, EXTENDED_BACKDROP, extendedWidgetBackdrop, "extended_widget_backdrop", true);
 
         } else if (dropdownSelection == "miscMenu") {
             addHeader(list, MENU_ITEMS);
@@ -1013,11 +1014,13 @@ public:
 
         if (inSettingsMenu && !inSubSettingsMenu) {
             if (!returningToSettings) {
-                if (reloadMenu3) {
-                    tsl::goBack();
-                    tsl::changeTo<UltrahandSettingsMenu>();
-                    reloadMenu3 = false;
-                }
+                //if (reloadMenu3) {
+                //    //tsl::elm::skipDeconstruction = true;
+                //    tsl::goBack();
+                //    //tsl::elm::skipDeconstruction = false;
+                //    tsl::changeTo<UltrahandSettingsMenu>();
+                //    reloadMenu3 = false;
+                //}
                 //if (simulatedNextPage.load(std::memory_order_acquire)) {
                 //    simulatedNextPage.store(false, std::memory_order_release);
                 //}
@@ -1033,10 +1036,19 @@ public:
                     returningToMain = (lastMenu != "hiddenMenuMode");
                     returningToHiddenMain = !returningToMain;
                     lastMenu = "settingsMenu";
-                    tsl::goBack();
+                    
+
                     if (reloadMenu) {
+                        //tsl::elm::skipDeconstruction = true;
+                        
+                        //tsl::elm::skipDeconstruction = true;
+                        tsl::pop(2);
+                        //tsl::elm::skipDeconstruction = false;
+                        //tsl::elm::skipDeconstruction = false;
                         tsl::changeTo<MainMenu>(lastMenuMode);
                         reloadMenu = false;
+                    } else {
+                        tsl::goBack();
                     }
                     return true;
                 }
@@ -1058,12 +1070,13 @@ public:
                 
 
                 if (reloadMenu2) {
-                    tsl::elm::skipDeconstruction = true;
+                    
                     selectedListItem   = nullptr;
                     lastSelectedListItem = nullptr;
                     forwarderListItem  = nullptr;
+                    //tsl::elm::skipDeconstruction = true;
                     tsl::goBack(2);
-                    tsl::elm::skipDeconstruction = false;
+                    //tsl::elm::skipDeconstruction = false;
                     tsl::changeTo<UltrahandSettingsMenu>();
                     reloadMenu2 = false;
                     //languageWasChanged = false;
@@ -1082,8 +1095,6 @@ public:
             inSettingsMenu = true;
             tsl::impl::parseOverlaySettings();
         }
-
-        if (redrawWidget) reinitializeWidgetVars();
 
         if (triggerExit.load(std::memory_order_acquire)) {
             triggerExit.store(false, std::memory_order_release);
@@ -1459,7 +1470,7 @@ public:
                     keysDown |= KEY_B;
                 }
 
-                if ((keysDown & KEY_B) && !stillTouching.load(std::memory_order_acquire)) {
+                if ((keysDown & KEY_B) && !stillTouching) {
                     allowSlide.exchange(false, std::memory_order_acq_rel);
                     unlockedSlide.exchange(false, std::memory_order_acq_rel);
                     inSettingsMenu = false;
@@ -1468,16 +1479,30 @@ public:
                     else
                         returningToHiddenMain = true;
                     
-                    tsl::goBack();
                     
                     if (reloadMenu) {
+                        int popCount;
                         if (lastMenu == "hiddenMenuMode") {
-                            tsl::goBack();
+                            //tsl::goBack();
+                            popCount = 3;
                             inMainMenu = false;
                             inHiddenMode = true;
-                        } else
-                            reloadMenu = false;
+                            if (entryMode == OVERLAY_STR)
+                                setIniFileValue(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, IN_HIDDEN_OVERLAY_STR, TRUE_STR);
+                            else
+                                popCount = 2;
+                        } else {
+                            popCount = 2;
+                            
+                        }
+                        reloadMenu = false;
+                        //tsl::elm::skipDeconstruction = true;
+                        tsl::pop(popCount);
+                        //tsl::elm::skipDeconstruction = false;
+
                         tsl::changeTo<MainMenu>(lastMenuMode);
+                    } else {
+                        tsl::goBack();
                     }
                     
                     lastMenu = "settingsMenu";
@@ -2691,7 +2716,9 @@ public:
         }
 
         if (refreshPage && !stillTouching.load(std::memory_order_acquire)) {
+            //tsl::elm::skipDeconstruction = true;
             tsl::goBack();
+            //tsl::elm::skipDeconstruction = false;
             tsl::changeTo<SelectionOverlay>(filePath, specificKey, specifiedFooterKey);
             refreshPage = false;
         }
@@ -2842,7 +2869,11 @@ std::vector<std::vector<std::string>> gatherPromptCommands(
     return promptCommands;
 }
 
-
+auto clearAndDelete = [](auto& vec) {
+    for (auto* p : vec) delete p;
+    vec.clear();
+    vec.shrink_to_fit();
+};
 
 
 class PackageMenu; // forwarding
@@ -3895,6 +3926,7 @@ bool drawCommandsMenu(tsl::elm::List* list,
                                     selectionCommandsOff.clear();
                                     selectionCommandsOff.shrink_to_fit();
                                     selectionCommands = commands;
+
                                     tsl::changeTo<SelectionOverlay>(packagePath, keyName, newKey, _lastPackageHeader);
                                     //lastKeyName = keyName;
                                 }
@@ -4393,12 +4425,18 @@ public:
                     lastPage = currentPage;
                     lastPackageName = PACKAGE_FILENAME;
                     
-                    while (nestedMenuCount > 0) {
-                        tsl::goBack();
-                        nestedMenuCount--;
-                    }
+                    //tsl::elm::skipDeconstruction = true;
+                    //while (nestedMenuCount > 0) {
+                    //    tsl::goBack();
+                    //    nestedMenuCount--;
+                    //}
+                    //
+                    //tsl::goBack();
 
-                    tsl::goBack();
+                    tsl::goBack(nestedMenuCount+1);
+                    nestedMenuCount = 0;
+
+                    //tsl::elm::skipDeconstruction = false;
                     tsl::changeTo<PackageMenu>(lastPackagePath, "");
                     inPackageMenu = true;
                     inSubPackageMenu = false;
@@ -4425,7 +4463,7 @@ public:
 
             if (currentPage == LEFT_STR) {
 
-                if (tsl::elm::s_hasValidFrame.load(std::memory_order_acquire)  && (keysDown & KEY_RIGHT) && !(keysHeld & KEY_LEFT) && !(keysDown & ~KEY_RIGHT & ~KEY_R & ALL_KEYS_MASK) && !stillTouching.load(std::memory_order_acquire) && 
+                if (tsl::elm::s_safeToSwap.load(std::memory_order_acquire)  && (keysDown & KEY_RIGHT) && !(keysHeld & KEY_LEFT) && !(keysDown & ~KEY_RIGHT & ~KEY_R & ALL_KEYS_MASK) && !stillTouching.load(std::memory_order_acquire) && 
                     (((!allowSlide.load(std::memory_order_acquire) && onTrackBar.load(std::memory_order_acquire) && !unlockedSlide.load(std::memory_order_acquire)) || (keysDown & KEY_R)) || !onTrackBar.load(std::memory_order_acquire))) {// && tsl::elm::safeToSwap.exchange(false, std::memory_order_acq_rel)) {//{&&
                     //!tsl::elm::s_lastFrameItems.empty() && (tsl::elm::s_isForwardCache && tsl::elm::s_hasValidFrame)) {
 
@@ -4473,7 +4511,7 @@ public:
 
             } else if (currentPage == RIGHT_STR) {
                 
-                if (tsl::elm::s_hasValidFrame.load(std::memory_order_acquire)  && (keysDown & KEY_LEFT) && !(keysHeld & KEY_RIGHT) && !(keysDown & ~KEY_LEFT & ~KEY_R & ALL_KEYS_MASK) && !stillTouching.load(std::memory_order_acquire) && 
+                if (tsl::elm::s_safeToSwap.load(std::memory_order_acquire)  && (keysDown & KEY_LEFT) && !(keysHeld & KEY_RIGHT) && !(keysDown & ~KEY_LEFT & ~KEY_R & ALL_KEYS_MASK) && !stillTouching.load(std::memory_order_acquire) && 
                     (((!allowSlide.load(std::memory_order_acquire) && onTrackBar.load(std::memory_order_acquire) && !unlockedSlide.load(std::memory_order_acquire)) || (keysDown & KEY_R)) || !onTrackBar.load(std::memory_order_acquire)) ) {// && tsl::elm::safeToSwap.exchange(false, std::memory_order_acq_rel)) {//&& 
                     //!tsl::elm::s_lastFrameItems.empty() && (tsl::elm::s_isForwardCache && tsl::elm::s_hasValidFrame)) {
 
@@ -5121,7 +5159,7 @@ public:
                         if (cleanVersionLabels)
                             overlayVersion = cleanVersionLabel(overlayVersion);
                         if (!hideOverlayVersions)
-                            listItem->setValue(overlayVersion, true);
+                            listItem->setValue(overlayVersion, true, true);
                         
 
                         if (overlayFileName == g_overlayFilename) {
@@ -5448,7 +5486,7 @@ public:
                     if (isFileOrDirectory(packageFilePath)) {
                         listItem = new tsl::elm::ListItem(packageStarred ? STAR_SYMBOL + "  " + newPackageName : newPackageName);
                         if (!hidePackageVersions)
-                           listItem->setValue(packageVersion, true);
+                           listItem->setValue(packageVersion, true, true);
                         
                         // Add a click listener to load the overlay when clicked upon
                         listItem->setClickListener([packageFilePath, newStarred, packageName, newPackageName, packageVersion](s64 keys) {
@@ -5769,7 +5807,7 @@ public:
                     }
                 }
                 
-                if (tsl::elm::s_hasValidFrame.load(std::memory_order_acquire)  && (keysDown & KEY_RIGHT) && !(keysHeld & KEY_LEFT) && !(keysDown & ~KEY_RIGHT & ~KEY_R & ALL_KEYS_MASK) &&
+                if (tsl::elm::s_safeToSwap.load(std::memory_order_acquire)  && (keysDown & KEY_RIGHT) && !(keysHeld & KEY_LEFT) && !(keysDown & ~KEY_RIGHT & ~KEY_R & ALL_KEYS_MASK) &&
                     !stillTouching.load(std::memory_order_acquire) && (((!allowSlide.load(std::memory_order_acquire) && !unlockedSlide.load(std::memory_order_acquire) && onTrackBar.load(std::memory_order_acquire)) || (keysDown & KEY_R)) || !onTrackBar.load(std::memory_order_acquire)) ){// && tsl::elm::safeToSwap.exchange(false, std::memory_order_acq_rel)){ //&&
                     //!tsl::elm::s_lastFrameItems.empty() && (tsl::elm::s_isForwardCache && tsl::elm::s_hasValidFrame)) {
                     g_overlayFilename = "";
@@ -5834,7 +5872,7 @@ public:
                 //    ult::simulatedNextPage.compare_exchange_strong(expected, false, std::memory_order_release);
                 }
 
-                if (tsl::elm::s_hasValidFrame.load(std::memory_order_acquire)  && (keysDown & KEY_LEFT) && !(keysHeld & KEY_RIGHT) && !(keysDown & ~KEY_LEFT & ~KEY_R & ALL_KEYS_MASK) &&
+                if (tsl::elm::s_safeToSwap.load(std::memory_order_acquire)  && (keysDown & KEY_LEFT) && !(keysHeld & KEY_RIGHT) && !(keysDown & ~KEY_LEFT & ~KEY_R & ALL_KEYS_MASK) &&
                     !stillTouching.load(std::memory_order_acquire) &&(((!allowSlide.load(std::memory_order_acquire) && onTrackBar.load(std::memory_order_acquire) && !unlockedSlide.load(std::memory_order_acquire)) || (keysDown & KEY_R)) || !onTrackBar.load(std::memory_order_acquire)) ) {// && tsl::elm::safeToSwap.exchange(false, std::memory_order_acq_rel)) { //&&
                     //!tsl::elm::s_lastFrameItems.empty() && (tsl::elm::s_isForwardCache && tsl::elm::s_hasValidFrame)) {
                     g_overlayFilename = "";
@@ -6001,10 +6039,6 @@ public:
             inHiddenMode = true;
         }
         
-        if (redrawWidget) {
-            reinitializeWidgetVars();
-            redrawWidget = false;
-        }
 
         if (triggerExit.load(std::memory_order_acquire)) {
             triggerExit.store(false, std::memory_order_release);
