@@ -35,9 +35,6 @@
 
 using namespace ult;
 
-u64 lastNextPageTapTime = 0;
-static constexpr u64 NEXT_PAGE_COOLDOWN_NS = 500'000'000; // 500ms in nanoseconds
-
 
 
 // Overlay booleans
@@ -170,15 +167,14 @@ void shiftItemFocus(tsl::elm::Element* element) {
  * updates the user interface accordingly, and handles the thread failure and abort conditions.
  *
  * @param keysDown A bitset representing keys that are pressed down.
- * @param stillTouching Boolean indicating if the touchscreen is being interacted with.
- * @param lastSelectedListItem Reference to the UI element displaying the current status.
- * @param commandSuccess Reference to a boolean tracking the overall command success.
+ * @param keysHeld A bitset representing keys that are held down.
  * @return `true` if the operation needs to abort, `false` otherwise.
  */
 bool handleRunningInterpreter(uint64_t& keysDown, uint64_t& keysHeld) {
     static int lastPct = -1;
     static uint8_t lastOp = 255;
     static bool inProg = true;
+    static uint8_t currentOpIndex = 0;  // Track which operation to check first
     
     // FIX: More robust abort handling
     if (((keysDown & KEY_R) && !(keysHeld & ~KEY_R & ALL_KEYS_MASK) && !stillTouching.load(std::memory_order_acquire)) || externalAbortCommands.load(std::memory_order_relaxed)) {
@@ -188,12 +184,12 @@ bool handleRunningInterpreter(uint64_t& keysDown, uint64_t& keysHeld) {
         abortFileOp.store(true, std::memory_order_release);
         abortCommand.store(true, std::memory_order_release);
         externalAbortCommands.store(false, std::memory_order_release);
-
         // Reset UI state
         commandSuccess = false;
         lastPct = -1;
         lastOp = 255;
         inProg = true;
+        currentOpIndex = 0;  // Reset operation tracking
         
         return true;
     }
@@ -216,39 +212,63 @@ bool handleRunningInterpreter(uint64_t& keysDown, uint64_t& keysHeld) {
         commandSuccess = false;
     }
     
-    // FIX: Better progress tracking with atomic operations
+    // FIX: Ultra-optimized progress tracking - single operation check
     static std::atomic<int>* const pcts[] = {&downloadPercentage, &unzipPercentage, &copyPercentage};
     static const std::string* const syms[] = {&DOWNLOAD_SYMBOL, &UNZIP_SYMBOL, &COPY_SYMBOL};
     
-    bool foundActive = false;
     int currentPct = -1;
     uint8_t currentOp = 255;
     
-    // Check operations in order
-    static int pct;
-    for (uint8_t i = 0; i < 3; ++i) {
-        pct = pcts[i]->load(std::memory_order_acquire);
+    // If we know operations are sequential, check current index first
+    int pct = pcts[currentOpIndex]->load(std::memory_order_acquire);
+    
+    bool displayed100 = false;
+    if (pct >= 0 && pct < 100) {
+        // Current operation is active
+        currentPct = pct;
+        currentOp = currentOpIndex;
+    } else if (pct == 100) {
+        displayPercentage.store(100, std::memory_order_release);
+        lastSelectedListItem->setValue(*syms[currentOpIndex] + " 100%");
+        displayed100 = true;
+
+        // Current operation completed, mark and advance
+        pcts[currentOpIndex]->store(-1, std::memory_order_release);
+        currentOpIndex = (currentOpIndex + 1) % 3;
         
-        if (pct >= 0 && pct < 100) {  // Active operation
-            if (!foundActive) {
-                foundActive = true;
+        // Check if next operation is already active
+        pct = pcts[currentOpIndex]->load(std::memory_order_acquire);
+        if (pct >= 0 && pct < 100) {
+            currentPct = pct;
+            currentOp = currentOpIndex;
+        }
+    } else {
+        // Current operation not active, do a quick scan for any active operation
+        for (uint8_t i = 0; i < 3; ++i) {
+            pct = pcts[i]->load(std::memory_order_acquire);
+            if (pct >= 0 && pct < 100) {
                 currentPct = pct;
                 currentOp = i;
+                currentOpIndex = i;
+                break;
             }
-        } else if (pct == 100) {
-            // Mark as completed
-            pcts[i]->store(-1, std::memory_order_release);
         }
     }
     
     // Update UI only when necessary
-    if (foundActive && (currentPct != lastPct || currentOp != lastOp)) {
-        lastSelectedListItem->setValue(*syms[currentOp] + " " + ult::to_string(currentPct) + "%");
+    if (currentOp != 255 && (currentPct != lastPct || currentOp != lastOp)) {
+        if (!displayed100) {
+            displayPercentage.store(currentPct, std::memory_order_release);
+            lastSelectedListItem->setValue(*syms[currentOp] + " " + ult::to_string(currentPct) + "%");
+        }
         lastPct = currentPct;
         lastOp = currentOp;
         inProg = true;  // Reset inProg when we have active operations
-    } else if (!foundActive && inProg) {
-        lastSelectedListItem->setValue(INPROGRESS_SYMBOL);
+    } else if (currentOp == 255 && inProg && lastPct < 0) {
+        if (!displayed100) {
+            displayPercentage.store(-1, std::memory_order_release);
+            lastSelectedListItem->setValue(INPROGRESS_SYMBOL);
+        }
         inProg = false;
     }
     
@@ -294,14 +314,14 @@ private:
                     downloadFile(LATEST_RELEASE_INFO_URL, SETTINGS_PATH);
                     downloadPercentage.store(-1, std::memory_order_release);
                 } else if (targetMenu == "themeMenu") {
-                    if (!isFileOrDirectory(THEMES_PATH+"ultra.ini")) {
+                    if (!isFile(THEMES_PATH+"ultra.ini")) {
                         //executeCommands({
                         //    {"download", INCLUDED_THEME_FOLDER_URL+"ultra.ini", THEMES_PATH}
                         //});
                         downloadFile(INCLUDED_THEME_FOLDER_URL+"ultra.ini", THEMES_PATH);
                         downloadPercentage.store(-1, std::memory_order_release);
                     }
-                    if (!isFileOrDirectory(THEMES_PATH+"classic.ini")) {
+                    if (!isFile(THEMES_PATH+"classic.ini")) {
                         //executeCommands({
                         //    {"download", INCLUDED_THEME_FOLDER_URL+"classic.ini", THEMES_PATH}
                         //});
@@ -311,13 +331,46 @@ private:
                 }
 
                 tsl::changeTo<UltrahandSettingsMenu>(targetMenu);
-                selectedListItem = nullptr;
+                //selectedListItem = nullptr;
                 selectedListItem = listItem;
                 return true;
             }
             return false;
         });
         list->addItem(listItem);
+    }
+
+    // Add this method to the UltrahandSettingsMenu class
+    void removeKeyComboFromOthers(const std::string& keyCombo) {
+        auto overlayNames = getOverlayNames(); // Get all overlay names
+        std::string existingCombo;
+        
+        for (const auto& overlayName : overlayNames) {
+            // 1. Remove from main key_combo field if it matches
+            existingCombo = parseValueFromIniSection(OVERLAYS_INI_FILEPATH, overlayName, KEY_COMBO_STR);
+            if (!existingCombo.empty() && tsl::hlp::comboStringToKeys(existingCombo) == tsl::hlp::comboStringToKeys(keyCombo)) {
+                setIniFileValue(OVERLAYS_INI_FILEPATH, overlayName, KEY_COMBO_STR, "");
+            }
+            
+            // 2. Remove from mode_combos list if any element matches
+            std::string comboListStr = parseValueFromIniSection(OVERLAYS_INI_FILEPATH, overlayName, "mode_combos");
+            if (!comboListStr.empty()) {
+                std::vector<std::string> comboList = splitIniList(comboListStr);
+                bool modified = false;
+                
+                for (std::string& combo : comboList) {
+                    if (!combo.empty() && tsl::hlp::comboStringToKeys(combo) == tsl::hlp::comboStringToKeys(keyCombo)) {
+                        combo.clear();
+                        modified = true;
+                    }
+                }
+                
+                if (modified) {
+                    std::string newComboStr = "(" + joinIniList(comboList) + ")";
+                    setIniFileValue(OVERLAYS_INI_FILEPATH, overlayName, "mode_combos", newComboStr);
+                }
+            }
+        }
     }
 
     void handleSelection(tsl::elm::List* list, const std::vector<std::string>& items, const std::string& defaultItem, const std::string& iniKey, const std::string& targetMenu) {
@@ -333,10 +386,10 @@ private:
             listItem = new tsl::elm::ListItem(mappedItem);
             if (item == defaultItem) {
                 listItem->setValue(CHECKMARK_SYMBOL);
-                lastSelectedListItem = nullptr;
+                //lastSelectedListItem = nullptr;
                 lastSelectedListItem = listItem;
             }
-            listItem->setClickListener([item, mappedItem, defaultItem, iniKey, targetMenu, listItem](uint64_t keys) {
+            listItem->setClickListener([this, item, mappedItem, defaultItem, iniKey, targetMenu, listItem](uint64_t keys) {
                 //listItemPtr = std::shared_ptr<tsl::elm::ListItem>(listItem, [](auto*){})](uint64_t keys) {
                 if (runningInterpreter.load(std::memory_order_acquire))
                     return false;
@@ -351,16 +404,22 @@ private:
                         if (targetMenu == KEY_COMBO_STR) {
                             // Also set it in tesla config
                             setIniFileValue(TESLA_CONFIG_INI_PATH, TESLA_STR, iniKey, item);
-                
+                            
                             // Remove this key combo from any overlays using it
-                            const auto overlaySections =  ult::parseSectionsFromIni(OVERLAYS_INI_FILEPATH);
-                            for (const auto& section : overlaySections) {
-                                const std::string overlayCombo = parseValueFromIniSection(OVERLAYS_INI_FILEPATH, section, KEY_COMBO_STR);
-                                if (overlayCombo == item) {
-                                    // Clear the key combo for this overlay
-                                    setIniFileValue(OVERLAYS_INI_FILEPATH, section, KEY_COMBO_STR, "");
-                                }
-                            }
+                            //const auto overlaySections =  ult::parseSectionsFromIni(OVERLAYS_INI_FILEPATH);
+                            //for (const auto& section : overlaySections) {
+                            //    const std::string overlayCombo = parseValueFromIniSection(OVERLAYS_INI_FILEPATH, section, KEY_COMBO_STR);
+                            //    if (overlayCombo == item) {
+                            //        // Clear the key combo for this overlay
+                            //        setIniFileValue(OVERLAYS_INI_FILEPATH, section, KEY_COMBO_STR, "");
+                            //    }
+                            //}
+
+                            // Remove this key combo from any overlays using it (both key_combo and mode_combos)
+                            this->removeKeyComboFromOthers(item);
+                            
+                            // Reload the overlay key combos to reflect changes
+                            tsl::hlp::loadOverlayKeyCombos();
                         }
                 
                         reloadMenu = true;
@@ -462,7 +521,7 @@ private:
                 startInterpreterThread();
 
                 listItem->setValue(INPROGRESS_SYMBOL);
-                lastSelectedListItem = nullptr;
+                //lastSelectedListItem = nullptr;
                 lastSelectedListItem = listItem;
                 shiftItemFocus(listItem);
                 lastRunningInterpreter = true;
@@ -486,20 +545,20 @@ private:
             setIniFileValue(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, iniKey, actualState ? TRUE_STR : FALSE_STR);
     
             if (iniKey == "clean_version_labels") {
-                versionLabel = APP_VERSION + std::string("   (") + loaderTitle + (actualState ? " v" : " ") + cleanVersionLabel(loaderInfo) + std::string(")");
+                versionLabel = APP_VERSION + std::string("  (") + loaderTitle + " " + cleanVersionLabel(loaderInfo) + std::string(")");
                 reinitializeVersionLabels();
                 reloadMenu = true;
             } else if (iniKey == "clean_version_labels" || iniKey == "hide_overlay_versions" || iniKey == "hide_package_versions" || iniKey == "page_swap" || iniKey == "hide_hidden") {
                 reloadMenu = true;
             } else if (iniKey == "memory_expansion") {
-                if (!isFileOrDirectory(EXPANSION_PATH + "nx-ovlloader.zip")) {
+                if (!isFile(EXPANSION_PATH + "nx-ovlloader.zip")) {
                     if (isVersionGreaterOrEqual(amsVersion,"1.8.0"))
                         downloadFile(NX_OVLLOADER_ZIP_URL, EXPANSION_PATH);
                     else
                         downloadFile(OLD_NX_OVLLOADER_ZIP_URL, EXPANSION_PATH);
                     downloadPercentage.store(-1, std::memory_order_release);
                 }
-                if (!isFileOrDirectory(EXPANSION_PATH + "nx-ovlloader+.zip")) {
+                if (!isFile(EXPANSION_PATH + "nx-ovlloader+.zip")) {
                     if (isVersionGreaterOrEqual(amsVersion,"1.8.0"))
                         downloadFile(NX_OVLLOADER_PLUS_ZIP_URL, EXPANSION_PATH);
                     else
@@ -525,6 +584,8 @@ private:
                 triggerMenuReload = (rightAlignmentState != actualState);
             } else if (iniKey == "dynamic_logo") {
                 useDynamicLogo = !useDynamicLogo;
+            } else if (iniKey == "launch_combos") {
+                useLaunchCombos = !useLaunchCombos;
             } else if (iniKey == "opaque_screenshots") {
                 useOpaqueScreenshots = !useOpaqueScreenshots;
             }
@@ -603,7 +664,7 @@ public:
                 if (defaultLangMode == defaulLang) {
                     lastSelectedListItemFooter = defaultLangMode;
                     listItem->setValue(CHECKMARK_SYMBOL);
-                    lastSelectedListItem = nullptr;
+                    //lastSelectedListItem = nullptr;
                     lastSelectedListItem = listItem;
                 }
                 listItem->setClickListener([skipLang = !isFileOrDirectory(langFile), defaultLangMode, defaulLang, langFile, listItem](uint64_t keys) {
@@ -620,7 +681,7 @@ public:
                         lastSelectedListItem->setValue(lastSelectedListItemFooter);
                         selectedListItem->setValue(defaultLangMode);
                         listItem->setValue(CHECKMARK_SYMBOL);
-                        lastSelectedListItem = nullptr;
+                        //lastSelectedListItem = nullptr;
                         lastSelectedListItem = listItem;
                         shiftItemFocus(listItem);
                         lastSelectedListItem->triggerClickAnimation();
@@ -763,7 +824,7 @@ public:
             auto* listItem = new tsl::elm::ListItem(DEFAULT);
             if (currentTheme == DEFAULT_STR) {
                 listItem->setValue(CHECKMARK_SYMBOL);
-                lastSelectedListItem = nullptr;
+                //lastSelectedListItem = nullptr;
                 lastSelectedListItem = listItem;
             }
             listItem->setClickListener([defaultTheme = THEMES_PATH + "default.ini", listItem](uint64_t keys) {
@@ -784,7 +845,7 @@ public:
                     lastSelectedListItem->setValue("");
                     selectedListItem->setValue(DEFAULT);
                     listItem->setValue(CHECKMARK_SYMBOL);
-                    lastSelectedListItem = nullptr;
+                    //lastSelectedListItem = nullptr;
                     lastSelectedListItem = listItem;
                     shiftItemFocus(listItem);
                     lastSelectedListItem->triggerClickAnimation();
@@ -805,7 +866,7 @@ public:
                 listItem = new tsl::elm::ListItem(themeName);
                 if (themeName == currentTheme) {
                     listItem->setValue(CHECKMARK_SYMBOL);
-                    lastSelectedListItem = nullptr;
+                    //lastSelectedListItem = nullptr;
                     lastSelectedListItem = listItem;
                 }
                 listItem->setClickListener([themeName, themeFile, listItem](uint64_t keys) {
@@ -824,7 +885,7 @@ public:
                         lastSelectedListItem->setValue("");
                         selectedListItem->setValue(themeName);
                         listItem->setValue(CHECKMARK_SYMBOL);
-                        lastSelectedListItem = nullptr;
+                        //lastSelectedListItem = nullptr;
                         lastSelectedListItem = listItem;
                         shiftItemFocus(listItem);
                         lastSelectedListItem->triggerClickAnimation();
@@ -842,7 +903,7 @@ public:
             auto* listItem = new tsl::elm::ListItem(OPTION_SYMBOL);
             if (currentWallpaper == OPTION_SYMBOL) {
                 listItem->setValue(CHECKMARK_SYMBOL);
-                lastSelectedListItem = nullptr;
+                //lastSelectedListItem = nullptr;
                 lastSelectedListItem = listItem;
             }
 
@@ -859,7 +920,7 @@ public:
                     lastSelectedListItem->setValue("");
                     selectedListItem->setValue(OPTION_SYMBOL);
                     listItem->setValue(CHECKMARK_SYMBOL);
-                    lastSelectedListItem = nullptr;
+                    //lastSelectedListItem = nullptr;
                     lastSelectedListItem = listItem;
                     shiftItemFocus(listItem);
                     lastSelectedListItem->triggerClickAnimation();
@@ -881,7 +942,7 @@ public:
                 listItem = new tsl::elm::ListItem(wallpaperName);
                 if (wallpaperName == currentWallpaper) {
                     listItem->setValue(CHECKMARK_SYMBOL);
-                    lastSelectedListItem = nullptr;
+                    //lastSelectedListItem = nullptr;
                     lastSelectedListItem = listItem;
                 }
                 listItem->setClickListener([wallpaperName, wallpaperFile, listItem](uint64_t keys) {
@@ -899,7 +960,7 @@ public:
                         lastSelectedListItem->setValue("");
                         selectedListItem->setValue(wallpaperName);
                         listItem->setValue(CHECKMARK_SYMBOL);
-                        lastSelectedListItem = nullptr;
+                        //lastSelectedListItem = nullptr;
                         lastSelectedListItem = listItem;
                         shiftItemFocus(listItem);
                         lastSelectedListItem->triggerClickAnimation();
@@ -929,6 +990,9 @@ public:
             hideUserGuide = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "hide_user_guide") == TRUE_STR);
             createToggleListItem(list, USER_GUIDE, hideUserGuide, "hide_user_guide", true);
 
+            useDynamicLogo = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "dynamic_logo") == TRUE_STR);
+            createToggleListItem(list, DYNAMIC_LOGO, useDynamicLogo, "dynamic_logo");
+
             hideHidden = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "hide_hidden") == TRUE_STR);
             createToggleListItem(list, SHOW_HIDDEN, hideHidden, "hide_hidden", true);
 
@@ -941,10 +1005,16 @@ public:
             hidePackageVersions = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "hide_package_versions") == TRUE_STR);
             createToggleListItem(list, PACKAGE_VERSIONS, hidePackageVersions, "hide_package_versions", true);
             
-            addHeader(list, EFFECTS);
+            addHeader(list, FEATURES);
 
-            useDynamicLogo = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "dynamic_logo") == TRUE_STR);
-            createToggleListItem(list, DYNAMIC_LOGO, useDynamicLogo, "dynamic_logo");
+            useLaunchCombos = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "launch_combos") == TRUE_STR);
+            createToggleListItem(list, LAUNCH_COMBOS, useLaunchCombos, "launch_combos");
+
+            useOpaqueScreenshots = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "opaque_screenshots") == TRUE_STR);
+            createToggleListItem(list, OPAQUE_SCREENSHOTS, useOpaqueScreenshots, "opaque_screenshots");
+
+            useSwipeToOpen = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "swipe_to_open") == TRUE_STR);
+            createToggleListItem(list, SWIPE_TO_OPEN, useSwipeToOpen, "swipe_to_open");
 
             usePageSwap = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "page_swap") == TRUE_STR);
             createToggleListItem(list, PAGE_SWAP, usePageSwap, "page_swap");
@@ -952,12 +1022,6 @@ public:
             useRightAlignment = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "right_alignment") == TRUE_STR);
             rightAlignmentState = useRightAlignment;
             createToggleListItem(list, RIGHT_SIDE_MODE, useRightAlignment, "right_alignment");
-
-            useSwipeToOpen = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "swipe_to_open") == TRUE_STR);
-            createToggleListItem(list, SWIPE_TO_OPEN, useSwipeToOpen, "swipe_to_open");
-
-            useOpaqueScreenshots = (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "opaque_screenshots") == TRUE_STR);
-            createToggleListItem(list, OPAQUE_SCREENSHOTS, useOpaqueScreenshots, "opaque_screenshots");
             
         
         } else {
@@ -1071,9 +1135,9 @@ public:
 
                 if (reloadMenu2) {
                     
-                    selectedListItem   = nullptr;
-                    lastSelectedListItem = nullptr;
-                    forwarderListItem  = nullptr;
+                    //selectedListItem   = nullptr;
+                    //lastSelectedListItem = nullptr;
+                    //forwarderListItem  = nullptr;
                     //tsl::elm::skipDeconstruction = true;
                     tsl::goBack(2);
                     //tsl::elm::skipDeconstruction = false;
@@ -1088,9 +1152,9 @@ public:
         }
 
         if (returningToSettings && !(keysDown & KEY_B)) {
-            selectedListItem = nullptr;
-            lastSelectedListItem = nullptr;
-            forwarderListItem = nullptr;
+            //selectedListItem = nullptr;
+            //lastSelectedListItem = nullptr;
+            //forwarderListItem = nullptr;
             returningToSettings = false;
             inSettingsMenu = true;
             tsl::impl::parseOverlaySettings();
@@ -1108,18 +1172,36 @@ public:
 
 
 
+int settingsMenuPageDepth = 0;
+std::string rootEntryName, rootEntryMode, rootTitle, rootVersion;
 
 class SettingsMenu : public tsl::Gui {
 private:
-    std::string entryName, entryMode, overlayName, packageName, dropdownSelection, settingsIniPath;
+    std::string entryName, entryMode, title, version, dropdownSelection, settingsIniPath;
+   
     bool isInSection, inQuotes, isFromMainMenu;
     int MAX_PRIORITY = 20;
 
-public:
-    SettingsMenu(const std::string& name, const std::string& mode, const std::string& overlayName = "", const std::string& packageName = "", const std::string& selection = "")
-        : entryName(name), entryMode(mode), overlayName(overlayName), packageName(packageName), dropdownSelection(selection) {}
+    std::string modeTitle;
 
-    ~SettingsMenu() {}
+public:
+    SettingsMenu(const std::string& name, const std::string& mode, const std::string& title = "", const std::string& version = "", const std::string& selection = "")
+        : entryName(name), entryMode(mode), title(title), version(version), dropdownSelection(selection) {
+            // Only store once
+            if (settingsMenuPageDepth == 0) {
+               rootEntryName = name;
+               rootEntryMode = mode;
+               rootTitle = title;
+               rootVersion = version;
+            }
+            settingsMenuPageDepth++;
+        }
+
+    ~SettingsMenu() {
+        if (settingsMenuPageDepth > 0) {
+            settingsMenuPageDepth--;
+        }
+    }
 
     void createAndAddToggleListItem(
         tsl::elm::List* list,
@@ -1156,7 +1238,7 @@ public:
 
         if (iStr == priorityValue) {
             listItem->setValue(CHECKMARK_SYMBOL);
-            lastSelectedListItem = nullptr;
+            //lastSelectedListItem = nullptr;
             lastSelectedListItem = listItem;
         }
 
@@ -1178,7 +1260,7 @@ public:
                 lastSelectedListItem->setValue("");
                 selectedListItem->setValue(iStr);
                 listItem->setValue(CHECKMARK_SYMBOL);
-                lastSelectedListItem = nullptr;
+                //lastSelectedListItem = nullptr;
                 lastSelectedListItem = listItem;
                 shiftItemFocus(listItem);
                 lastSelectedListItem->triggerClickAnimation();
@@ -1191,14 +1273,15 @@ public:
 
     virtual tsl::elm::Element* createUI() override {
         settingsIniPath = (entryMode == OVERLAY_STR) ? OVERLAYS_INI_FILEPATH : PACKAGES_INI_FILEPATH;
-        std::string header = (entryMode == OVERLAY_STR) ? overlayName : packageName;
+        std::string header =  title + (!version.empty() ? (" " + version) : "");
         inSettingsMenu = dropdownSelection.empty();
         inSubSettingsMenu = !dropdownSelection.empty();
     
         auto list = new tsl::elm::List();
     
         if (inSettingsMenu) {
-            addHeader(list, header + " " + SETTINGS);
+            addHeader(list, SETTINGS + "  " + header);
+            //addHeader(list, header);
 
 
             if (entryMode == OVERLAY_STR) {
@@ -1212,15 +1295,15 @@ public:
                 
                 auto keyComboItem = new tsl::elm::ListItem(KEY_COMBO);
                 keyComboItem->setValue(displayCombo);
-                keyComboItem->setClickListener([entryName=entryName, entryMode=entryMode, overlayName=overlayName, listItem = keyComboItem](uint64_t keys) {
+                keyComboItem->setClickListener([entryName=entryName, entryMode=entryMode, overlayName=title, overlayVersion=version, listItem = keyComboItem](uint64_t keys) {
                     if (runningInterpreter.load(std::memory_order_acquire)) return false;
                     if (simulatedSelect.exchange(false, std::memory_order_acq_rel)) {
                         keys |= KEY_A;
                     }
                     if (keys & KEY_A) {
                         inMainMenu = false;
-                        tsl::changeTo<SettingsMenu>(entryName, entryMode, overlayName, "", KEY_COMBO_STR);
-                        selectedListItem = nullptr;
+                        tsl::changeTo<SettingsMenu>(entryName, entryMode, overlayName, overlayVersion, KEY_COMBO_STR);
+                        //selectedListItem = nullptr;
                         selectedListItem = listItem;
                         lastSelectedListItem->triggerClickAnimation();
                         return true;
@@ -1243,15 +1326,15 @@ public:
     
             auto* listItem = new tsl::elm::ListItem(SORT_PRIORITY);
             listItem->setValue(parseValueFromIniSection(settingsIniPath, entryName, PRIORITY_STR));
-            listItem->setClickListener([entryName=entryName, entryMode=entryMode, overlayName=overlayName, listItem](uint64_t keys) {
+            listItem->setClickListener([entryName=entryName, entryMode=entryMode, overlayName=title, overlayVersion=version, listItem](uint64_t keys) {
                 if (runningInterpreter.load(std::memory_order_acquire)) return false;
                 if (simulatedSelect.exchange(false, std::memory_order_acq_rel)) {
                     keys |= KEY_A;
                 }
                 if (keys & KEY_A) {
                     inMainMenu = false;
-                    tsl::changeTo<SettingsMenu>(entryName, entryMode, overlayName, "", PRIORITY_STR);
-                    selectedListItem = nullptr;
+                    tsl::changeTo<SettingsMenu>(entryName, entryMode, overlayName, overlayVersion, PRIORITY_STR);
+                    //selectedListItem = nullptr;
                     selectedListItem = listItem;
                     lastSelectedListItem->triggerClickAnimation();
                     return true;
@@ -1271,6 +1354,74 @@ public:
                     settingsIniPath,
                     entryName
                 );
+
+                std::string argStr = parseValueFromIniSection(settingsIniPath, entryName, "mode_args");
+                std::string comboStr = parseValueFromIniSection(settingsIniPath, entryName, "mode_combos");
+                std::string labelStr = parseValueFromIniSection(settingsIniPath, entryName, "mode_labels");
+                
+                std::vector<std::string> modeList = splitIniList(argStr);   // (-mini, -micro)
+                std::vector<std::string> comboList = splitIniList(comboStr);     // (ZL+ZR+DRIGHT, '')
+                std::vector<std::string> labelList = splitIniList(labelStr);     // (Mini Mode, Micro Mode)
+                
+                if (!modeList.empty()) {
+                    //addHeader(list, "Key Combo Modes");
+
+                    std::vector<std::vector<std::string>> tableData = {
+                        {"", "", ""}  // Direct reuse without reallocation
+                    };
+                    addTable(list, tableData, "", 163, 0, 19-5, 0, "header", "header", DEFAULT_STR, RIGHT_STR, true, false, false, true, "none", false);
+                    tableData = {
+                        {MODE, "", KEY_COMBO}  // Direct reuse without reallocation
+                    };
+                    addTable(list, tableData, "", 165, 19-2, 19-2, 0, "header", "header", DEFAULT_STR, RIGHT_STR, true, true, false, true, "none", false);
+                    
+                    // Parse the existing combos list, or create empty defaults
+                    std::string comboStr = parseValueFromIniSection(settingsIniPath, entryName, "mode_combos");
+                    std::vector<std::string> comboList = splitIniList(comboStr);
+                    // Ensure comboList is same size as modeList, fill with empty if missing
+                    if (comboList.size() < modeList.size())
+                        comboList.resize(modeList.size(), "");
+                    
+                    std::string mode, displayName, comboDisplay;
+                    for (size_t i = 0; i < modeList.size(); ++i) {
+                        mode = modeList[i];
+                        displayName = (i < labelList.size() && !labelList[i].empty()) ? labelList[i] : mode;
+                        std::string& combo = comboList[i];  // reference so we can modify
+                
+                        // Display combo or OPTION_SYMBOL if empty
+                        comboDisplay = combo.empty() ? OPTION_SYMBOL : combo;
+                        convertComboToUnicode(comboDisplay);
+                
+                        auto* item = new tsl::elm::ListItem(displayName);
+                        item->setValue(comboDisplay);
+                
+                        // Capture by pointer/ref so we can update comboList[i]
+                        item->setClickListener([entryName = entryName, settingsIniPath = settingsIniPath, i, mode, &comboList, item, this](uint64_t keys) mutable {
+                            if (runningInterpreter.load(std::memory_order_acquire)) return false;
+                            if (simulatedSelect.exchange(false, std::memory_order_acq_rel)) {
+                                keys |= KEY_A;
+                            }
+                            if (keys & KEY_A) {
+                                inMainMenu = false;
+                
+                                // Open a new SettingsMenu specifically for editing this mode combo
+                                tsl::changeTo<SettingsMenu>(
+                                    entryName,
+                                    OVERLAY_STR,
+                                    mode,
+                                    "",
+                                    "mode_combo_" + std::to_string(i)
+                                );
+                                selectedListItem = item;
+                                lastSelectedListItem->triggerClickAnimation();
+                                return true;
+                            }
+                            return false;
+                        });
+                
+                        list->addItem(item);
+                    }
+                }
             } else if (entryMode == PACKAGE_STR) {
                 createAndAddToggleListItem(
                     list,
@@ -1332,7 +1483,8 @@ public:
                 if (keys & KEY_A) {
                     // Remove key combo from this overlay
                     setIniFileValue(settingsIniPath, entryName, KEY_COMBO_STR, "");
-                    //reloadMenu = true;
+                    tsl::hlp::loadOverlayKeyCombos(); // reload combos
+                    reloadMenu2 = true;
                     
                     lastSelectedListItem->setValue("");
                     selectedListItem->setValue(OPTION_SYMBOL);
@@ -1371,12 +1523,12 @@ public:
                         if (combo != currentKeyCombo) {
                             // Remove this key combo from any other overlays first
                             removeKeyComboFromOtherOverlays(combo, entryName);
-                        
                             // Set the new key combo for this overlay
                             setIniFileValue(settingsIniPath, entryName, KEY_COMBO_STR, combo);
                             //reloadMenu = true;
+                            tsl::hlp::loadOverlayKeyCombos(); // reload combos
                         }
-                        
+                        reloadMenu2 = true;
                         lastSelectedListItem->setValue("");
                         selectedListItem->setValue(mappedCombo);
                         listItem->setValue(CHECKMARK_SYMBOL);
@@ -1389,6 +1541,118 @@ public:
                 });
                 list->addItem(listItem);
             }
+        } else if (dropdownSelection.rfind("mode_combo_", 0) == 0) {  // starts with "mode_combo_"
+            // Extract index from dropdownSelection suffix
+            std::string indexStr = dropdownSelection.substr(std::string("mode_combo_").length());
+            size_t idx = std::stoi(indexStr);
+            
+            // Read labels and use label if available, otherwise fall back to title with quotes
+            std::string labelStr = parseValueFromIniSection(settingsIniPath, entryName, "mode_labels");
+            std::vector<std::string> labelList = splitIniList(labelStr);
+            std::string labelText = (idx < labelList.size() && !labelList[idx].empty()) ? 
+                                   labelList[idx] : 
+                                   "'" + title + "'";
+            if ((idx < labelList.size() && !labelList[idx].empty()))
+                modeTitle = labelList[idx];
+            else
+                modeTitle = title;
+            std::string headerText = KEY_COMBO + "  " + labelText;
+            labelList.clear();
+            addHeader(list, headerText);
+
+            // Reboot required info
+            //std::vector<std::vector<std::string>> tableData = {
+            //    {"Key Combo", "", labelText}  // Direct reuse without reallocation
+            //};
+            //
+            //addTable(list, tableData, "", 163, 19-2, 19-2, 0, "header", "header", DEFAULT_STR, RIGHT_STR, true, true, false, true, "none", false);
+
+        
+            // Read current combo list and ensure it's large enough
+            std::string comboStr = parseValueFromIniSection(settingsIniPath, entryName, "mode_combos");
+            std::vector<std::string> comboList = splitIniList(comboStr);
+            if (idx >= comboList.size()) comboList.resize(idx + 1, "");
+        
+            std::string currentCombo = comboList[idx];
+        
+            // Fetch global default combo (to exclude it)
+            std::string globalDefaultCombo = parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, KEY_COMBO_STR);
+            trim(globalDefaultCombo);
+        
+            // Add "No Combo" option
+            auto* noComboItem = new tsl::elm::ListItem(OPTION_SYMBOL);
+            if (currentCombo.empty()) {
+                noComboItem->setValue(CHECKMARK_SYMBOL);
+                lastSelectedListItem = noComboItem;
+            }
+            noComboItem->setClickListener([entryName=entryName, settingsIniPath=settingsIniPath, idx, comboList, noComboItem](uint64_t keys) mutable {
+                if (runningInterpreter.load(std::memory_order_acquire)) return false;
+                if (simulatedSelect.exchange(false, std::memory_order_acq_rel)) keys |= KEY_A;
+                if (keys & KEY_A) {
+                    comboList[idx] = "";
+                    std::string newComboStr = "(" + joinIniList(comboList) + ")";
+                    removeKeyComboFromOtherOverlays(newComboStr, entryName);
+                    setIniFileValue(settingsIniPath, entryName, "mode_combos", newComboStr);
+                    tsl::hlp::loadOverlayKeyCombos(); // reload combos
+                    reloadMenu2 = true;
+                    lastSelectedListItem->setValue("");
+                    selectedListItem->setValue(OPTION_SYMBOL);
+                    noComboItem->setValue(CHECKMARK_SYMBOL);
+                    lastSelectedListItem = noComboItem;
+                    shiftItemFocus(noComboItem);
+                    lastSelectedListItem->triggerClickAnimation();
+                    return true;
+                }
+                return false;
+            });
+            list->addItem(noComboItem);
+        
+            // Add valid combos
+            for (const auto& combo : defaultCombos) {
+                if (combo == globalDefaultCombo) continue; // Skip global default combo
+        
+                std::string mappedCombo = combo;
+                convertComboToUnicode(mappedCombo);
+        
+                auto* comboItem = new tsl::elm::ListItem(mappedCombo);
+                if (combo == currentCombo) {
+                    comboItem->setValue(CHECKMARK_SYMBOL);
+                    lastSelectedListItem = comboItem;
+                }
+        
+                comboItem->setClickListener([entryName=entryName, settingsIniPath=settingsIniPath, idx, combo, comboList, mappedCombo, comboItem](uint64_t keys) mutable {
+                    if (runningInterpreter.load(std::memory_order_acquire)) return false;
+                    if (simulatedSelect.exchange(false, std::memory_order_acq_rel)) keys |= KEY_A;
+                    if (keys & KEY_A) {
+                        if (combo != comboList[idx]) {
+                            // Remove same combo from other overlays (both key_combo + mode_combos)
+                            removeKeyComboFromOtherOverlays(combo, entryName);
+                            
+                            // Re-read the combo list after cleaning to get the updated values
+                            std::string comboStr = parseValueFromIniSection(settingsIniPath, entryName, "mode_combos");
+                            comboList = splitIniList(comboStr);
+                            if (idx >= comboList.size()) comboList.resize(idx + 1, "");
+                            
+                            comboList[idx] = combo;
+                            std::string newComboStr = "(" + joinIniList(comboList) + ")";
+                            setIniFileValue(settingsIniPath, entryName, "mode_combos", newComboStr);
+                            tsl::hlp::loadOverlayKeyCombos(); // reload combos
+                        }
+                        
+                        reloadMenu2 = true;
+                        lastSelectedListItem->setValue("");
+                        selectedListItem->setValue(mappedCombo);
+                        comboItem->setValue(CHECKMARK_SYMBOL);
+                        lastSelectedListItem = comboItem;
+                        shiftItemFocus(comboItem);
+                        lastSelectedListItem->triggerClickAnimation();
+                        return true;
+                    }
+                    return false;
+                });
+        
+                list->addItem(comboItem);
+            }
         } else {
             addBasicListItem(list, FAILED_TO_OPEN + ": " + settingsIniPath);
         }
@@ -1398,16 +1662,20 @@ public:
         //return rootFrame.release();
 
         auto rootFrame = new tsl::elm::OverlayFrame(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel);
-        if (inSubSettingsMenu && ((dropdownSelection == KEY_COMBO_STR) || (dropdownSelection == PRIORITY_STR))) {
+        if (inSubSettingsMenu &&
+            (dropdownSelection == KEY_COMBO_STR ||
+             dropdownSelection == PRIORITY_STR ||
+             dropdownSelection.rfind("mode_combo_", 0) == 0)) {
+
             jumpItemName = "";
             jumpItemValue = "";
             jumpItemExactMatch = true;
             g_overlayFilename = "";
-        } else {
-            jumpItemName = "🗿";
-            jumpItemValue = "";
-            jumpItemExactMatch = true;
-            g_overlayFilename = "";
+        //} else {
+        //    jumpItemName = "🗿";
+        //    jumpItemValue = "";
+        //    jumpItemExactMatch = true;
+        //    g_overlayFilename = "";
         }
         list->jumpToItem(jumpItemName, jumpItemValue, jumpItemExactMatch);
         rootFrame->setContent(list);
@@ -1481,6 +1749,7 @@ public:
                     
                     
                     if (reloadMenu) {
+                        reloadMenu = false;
                         int popCount;
                         if (lastMenu == "hiddenMenuMode") {
                             //tsl::goBack();
@@ -1495,10 +1764,15 @@ public:
                             popCount = 2;
                             
                         }
-                        reloadMenu = false;
+                        
                         //tsl::elm::skipDeconstruction = true;
                         tsl::pop(popCount);
                         //tsl::elm::skipDeconstruction = false;
+                        jumpItemName = rootTitle;
+                        jumpItemValue = rootVersion;
+                        g_overlayFilename = "";
+                        jumpItemExactMatch = false;
+                        skipJumpReset = true;
 
                         tsl::changeTo<MainMenu>(lastMenuMode);
                     } else {
@@ -1511,33 +1785,52 @@ public:
                 }
             }
         } else if (inSubSettingsMenu) {
-            //if (simulatedNextPage.load(std::memory_order_acquire)) {
-            //    simulatedNextPage.store(false, std::memory_order_release);
-            //}
             simulatedNextPage.exchange(false, std::memory_order_acq_rel);
-
             simulatedMenu.exchange(false, std::memory_order_acq_rel);
-
+        
             if (simulatedBack.exchange(false, std::memory_order_acq_rel)) {
                 keysDown |= KEY_B;
             }
-
+        
             if ((keysDown & KEY_B) && !stillTouching.load(std::memory_order_acquire)) {
                 allowSlide.exchange(false, std::memory_order_acq_rel);
                 unlockedSlide.exchange(false, std::memory_order_acq_rel);
                 inSubSettingsMenu = false;
                 returningToSettings = true;
-                tsl::goBack();
-                //tsl::Overlay::get()->close();
+        
+                // Step 1: Go back one menu level
+                
+        
+                // Step 2: If reload is needed, change to SettingsMenu with focus
+                if (reloadMenu2) {
+                    reloadMenu2 = false;
+                    tsl::goBack(2);
+        
+                    // Provide jump target context
+                    jumpItemName = modeTitle;                 // The overlay section name
+                    jumpItemValue = "";    // The specific item like "key_combo" or "mode_combo_2"
+                    jumpItemExactMatch = true;
+                    g_overlayFilename = "";
+
+                    tsl::changeTo<SettingsMenu>(
+                        rootEntryName,
+                        rootEntryMode,
+                        rootTitle,
+                        rootVersion
+                    );
+                } else {
+                    tsl::goBack();
+                }
+        
                 return true;
             }
         }
         
         
         if (returningToSettings && !(keysDown & KEY_B)){
-            selectedListItem = nullptr;
-            lastSelectedListItem = nullptr;
-            forwarderListItem = nullptr;
+            //selectedListItem = nullptr;
+            //lastSelectedListItem = nullptr;
+            //forwarderListItem = nullptr;
             returningToSettings = false;
             inSettingsMenu = true;
         }
@@ -1622,7 +1915,7 @@ private:
                 startInterpreterThread();
                 listItem->setValue(INPROGRESS_SYMBOL);
 
-                lastSelectedListItem = nullptr;
+                //lastSelectedListItem = nullptr;
                 lastSelectedListItem = listItem;
                
                 lastRunningInterpreter = true;
@@ -1948,7 +2241,7 @@ public:
     }
 
     ~SelectionOverlay() {
-        lastSelectedListItem = nullptr;
+        //lastSelectedListItem = nullptr;
         selectionCommands.clear();
         selectionCommands.shrink_to_fit();
         selectionCommandsOn.clear();
@@ -2468,7 +2761,7 @@ public:
 
                 if (commandMode == OPTION_STR) {
                     if (selectedFooterDict[specifiedFooterKey] == itemName) {
-                        lastSelectedListItem = nullptr;
+                        //lastSelectedListItem = nullptr;
                         lastSelectedListItem = listItem;
                         lastSelectedListItemFooter = footer;
                         listItem->setValue(CHECKMARK_SYMBOL);
@@ -2516,7 +2809,7 @@ public:
                         //lastCommandMode = commandMode;
                         //lastKeyName = selectedItem;
 
-                        lastSelectedListItem = nullptr;
+                        //lastSelectedListItem = nullptr;
                         lastSelectedListItem = listItem;
                         shiftItemFocus(listItem);
 
@@ -2772,9 +3065,9 @@ public:
         }
 
         if (returningToSelectionMenu && !(keysDown & KEY_B)){
-            selectedListItem = nullptr;
-            lastSelectedListItem = nullptr;
-            forwarderListItem = nullptr;
+            //selectedListItem = nullptr;
+            //lastSelectedListItem = nullptr;
+            //forwarderListItem = nullptr;
             returningToSelectionMenu = false;
             inSelectionMenu = true;
         }
@@ -3165,8 +3458,8 @@ bool drawCommandsMenu(tsl::elm::List* list,
                                 }
                                 if (keys & KEY_A) {
                                     inPackageMenu = false;
-                                    selectedListItem = nullptr;
-                                    lastSelectedListItem = nullptr;
+                                    //selectedListItem = nullptr;
+                                    //lastSelectedListItem = nullptr;
                                     //jumpItemName = "🗿";
                                     //jumpItemValue = "";
                                     //jumpItemExactMatch = true;
@@ -3507,6 +3800,7 @@ bool drawCommandsMenu(tsl::elm::List* list,
             if (!skipSection && !skipSystem) { // for skipping the drawing of sections
                 if (commandMode == TABLE_STR) {
                     if (useHeaderIndent) {
+                        tableColumnOffset = 165;
                         tableStartGap = tableEndGap = 19-2; // for perfect alignment for header tables
                         isScrollableTable = false;
                         lastPackageHeader = getFirstSectionText(tableData, packagePath);
@@ -3828,7 +4122,7 @@ bool drawCommandsMenu(tsl::elm::List* list,
                                     lastPackageMenu = "subPackageMenu";
 
                                 // set forwarder pointer for updating
-                                forwarderListItem = nullptr;
+                                //forwarderListItem = nullptr;
                                 forwarderListItem = listItem;
                                 lastCommandMode = FORWARDER_STR;
                                 lastKeyName = keyName;
@@ -3894,7 +4188,7 @@ bool drawCommandsMenu(tsl::elm::List* list,
                                     else
                                         lastPackageMenu = "subPackageMenu";
                                     
-                                    selectedListItem = nullptr;
+                                    //selectedListItem = nullptr;
                                     selectedListItem = listItem;
                                     
                                     std::string newKey = "";
@@ -3907,7 +4201,7 @@ bool drawCommandsMenu(tsl::elm::List* list,
                                         if (selectedFooterDict.find(newKey) == selectedFooterDict.end())
                                             selectedFooterDict[newKey] = footer;
                                     }
-                                    lastSelectedListItem = nullptr;
+                                    //lastSelectedListItem = nullptr;
                                     if (commandMode == OPTION_STR || commandMode == SLOT_STR) {
                                         jumpItemName = "";
                                         jumpItemValue = "";
@@ -3996,7 +4290,7 @@ bool drawCommandsMenu(tsl::elm::List* list,
                                 startInterpreterThread(packagePath);
                                 listItem->setValue(INPROGRESS_SYMBOL);
                                 
-                                lastSelectedListItem = nullptr;
+                                //lastSelectedListItem = nullptr;
                                 lastSelectedListItem = listItem;
                                 shiftItemFocus(listItem);
                                 lastCommandMode = commandMode;
@@ -4317,7 +4611,7 @@ public:
                     forwarderListItem->setValue(footerIt->second);
                 }
             }
-            forwarderListItem = nullptr;
+            //forwarderListItem = nullptr;
             lastCommandMode = "";
         }
     }
@@ -4370,7 +4664,7 @@ public:
                                 lastSelectedListItem->setValue(footerIt->second);
                             }
                         }
-                        lastSelectedListItem = nullptr;
+                        //lastSelectedListItem = nullptr;
                         lastCommandMode = "";
                     } else {
                         lastSelectedListItem->setValue(CHECKMARK_SYMBOL);
@@ -4405,8 +4699,8 @@ public:
                     inPackageMenu = false;
                     tsl::goBack();
                 
-                    selectedListItem = nullptr;
-                    lastSelectedListItem = nullptr;
+                    //selectedListItem = nullptr;
+                    //lastSelectedListItem = nullptr;
                     tsl::changeTo<PackageMenu>(lastPackagePath, lastDropdownSection, lastPage, lastPackageName, lastNestedLayer, pageHeader);
                 };
                 
@@ -4471,8 +4765,8 @@ public:
                     unlockedSlide.exchange(false, std::memory_order_acq_rel);
                     lastPage = RIGHT_STR;
                     //lastPackage = packagePath;
-                    selectedListItem = nullptr;
-                    lastSelectedListItem = nullptr;
+                    //selectedListItem = nullptr;
+                    //lastSelectedListItem = nullptr;
                     //jumpItemName = "";
                     //jumpItemValue = "";
                     //jumpItemExactMatch = true;
@@ -4519,8 +4813,8 @@ public:
                     allowSlide.exchange(false, std::memory_order_acq_rel);
                     unlockedSlide.exchange(false, std::memory_order_acq_rel);
                     lastPage = LEFT_STR;
-                    selectedListItem = nullptr;
-                    lastSelectedListItem = nullptr;
+                    //selectedListItem = nullptr;
+                    //lastSelectedListItem = nullptr;
                     
                     // Longer sleep for stability
                     //svcSleepThread(200'000);
@@ -4681,9 +4975,9 @@ public:
         if (returningToPackage && !returningToSubPackage && !(keysDown & KEY_B)){
             //lastPackageMenu = "packageMenu";
 
-            selectedListItem = nullptr;
-            lastSelectedListItem = nullptr;
-            forwarderListItem = nullptr;
+            //selectedListItem = nullptr;
+            //lastSelectedListItem = nullptr;
+            //forwarderListItem = nullptr;
             lastPackageMenu = "";
             returningToPackage = false;
             returningToSubPackage = false;
@@ -4697,9 +4991,9 @@ public:
         
         if (returningToSubPackage && !(keysDown & KEY_B)){
             //lastPackageMenu = "subPackageMenu";
-            selectedListItem = nullptr;
-            lastSelectedListItem = nullptr;
-            forwarderListItem = nullptr;
+            //selectedListItem = nullptr;
+            //lastSelectedListItem = nullptr;
+            //forwarderListItem = nullptr;
             lastPackageMenu = "";
             returningToPackage = false;
             returningToSubPackage = false;
@@ -4810,9 +5104,9 @@ public:
             inMainMenu = false;
         
         // Pre-declare all variables used in loops and throughout the function
-        std::string packagePath, pathReplace, pathReplaceOn, pathReplaceOff;
-        std::string filePath, specificKey, pathPattern, pathPatternOn, pathPatternOff, itemName, parentDirName, lastParentDirName;
-        std::vector<std::string> filesList, filesListOn, filesListOff, filterList, filterListOn, filterListOff;
+        std::string packagePath;//, pathReplace, pathReplaceOn, pathReplaceOff;
+        //std::string filePath, specificKey, pathPattern, pathPatternOn, pathPatternOff, itemName, parentDirName, lastParentDirName;
+        //std::vector<std::string> filesList, filesListOn, filesListOff, filterList, filterListOn, filterListOff;
         
         bool noClickableItems = false;
         bool toPackages = false;
@@ -4869,6 +5163,7 @@ public:
                 setDefaultValue(ultrahandSection, "memory_expansion", FALSE_STR, useMemoryExpansion);
                 // setDefaultValue(ultrahandSection, "custom_wallpaper", FALSE_STR, useCustomWallpaper);
                 setDefaultValue(ultrahandSection, "dynamic_logo", TRUE_STR, useDynamicLogo);
+                setDefaultValue(ultrahandSection, "launch_combos", TRUE_STR, useLaunchCombos);
                 setDefaultValue(ultrahandSection, "page_swap", FALSE_STR, usePageSwap);
                 setDefaultValue(ultrahandSection, "swipe_to_open", TRUE_STR, useSwipeToOpen);
                 setDefaultValue(ultrahandSection, "right_alignment", FALSE_STR, useRightAlignment);
@@ -4975,7 +5270,7 @@ public:
     
         menuMode = currentMenu;
         
-        versionLabel = std::string(APP_VERSION) + "   (" + loaderTitle + " " + (cleanVersionLabels ? "" : "v") + cleanVersionLabel(loaderInfo) + ")";
+        versionLabel = std::string(APP_VERSION) + "  (" + loaderTitle + " " + cleanVersionLabel(loaderInfo) + ")";
         //versionLabel = (cleanVersionLabels) ? std::string(APP_VERSION) : (std::string(APP_VERSION) + "   (" + extractTitle(loaderInfo) + " v" + cleanVersionLabel(loaderInfo) + ")");
         
         auto list = new tsl::elm::List();
@@ -5237,7 +5532,7 @@ public:
                                 // Also clear the global overlay filename since we're not on the main overlay list
                                 g_overlayFilename = "";
                                 
-                                tsl::changeTo<SettingsMenu>(overlayFileName, OVERLAY_STR, overlayName);
+                                tsl::changeTo<SettingsMenu>(overlayFileName, OVERLAY_STR, overlayName, overlayVersion);
                                 return true;
                             }
                             return false;
@@ -5572,7 +5867,7 @@ public:
                                 // Also clear the global overlay filename since we're not on the main overlay list
                                 g_overlayFilename = "";
                                 
-                                tsl::changeTo<SettingsMenu>(packageName, PACKAGE_STR, "", newPackageName);
+                                tsl::changeTo<SettingsMenu>(packageName, PACKAGE_STR, newPackageName, packageVersion);
                                 return true;
                             }
                             return false;
@@ -5635,8 +5930,8 @@ public:
             return createUI(); 
         }
         
-        filesList.clear();
-        filesList.shrink_to_fit();
+        //filesList.clear();
+        //filesList.shrink_to_fit();
     
         //auto rootFrame = std::make_unique<tsl::elm::OverlayFrame>(CAPITAL_ULTRAHAND_PROJECT_NAME, versionLabel, noClickableItems, menuMode+hiddenMenuMode+dropdownSection, "", "", "");
         //
@@ -5703,7 +5998,7 @@ public:
                                 lastSelectedListItem->setValue(footerIt->second);
                             }
                         }
-                        lastSelectedListItem = nullptr;
+                        //lastSelectedListItem = nullptr;
                         lastCommandMode = "";
                     } else {
                         lastSelectedListItem->setValue(CHECKMARK_SYMBOL);
@@ -5820,8 +6115,8 @@ public:
                     if (!usePageSwap) {
                         if (menuMode != PACKAGES_STR) {
                             currentMenu = PACKAGES_STR;
-                            selectedListItem = nullptr;
-                            lastSelectedListItem = nullptr;
+                            //selectedListItem = nullptr;
+                            //lastSelectedListItem = nullptr;
                             
                             //svcSleepThread(200'000);
                             //simulatedNextPage.store(false, std::memory_order_release);
@@ -5839,8 +6134,8 @@ public:
                     } else {
                         if (menuMode != OVERLAYS_STR) {
                             currentMenu = OVERLAYS_STR;
-                            selectedListItem = nullptr;
-                            lastSelectedListItem = nullptr;
+                            //selectedListItem = nullptr;
+                            //lastSelectedListItem = nullptr;
                             
                             //svcSleepThread(200'000);
                             //simulatedNextPage.store(false, std::memory_order_release);
@@ -5886,8 +6181,8 @@ public:
                     if (!usePageSwap) {
                         if (menuMode != OVERLAYS_STR) {
                             currentMenu = OVERLAYS_STR;
-                            selectedListItem = nullptr;
-                            lastSelectedListItem = nullptr;
+                            //selectedListItem = nullptr;
+                            //lastSelectedListItem = nullptr;
                             
                             //svcSleepThread(200'000);
                             //simulatedNextPage.store(false, std::memory_order_release);
@@ -5904,8 +6199,8 @@ public:
                     } else {
                         if (menuMode != PACKAGES_STR) {
                             currentMenu = PACKAGES_STR;
-                            selectedListItem = nullptr;
-                            lastSelectedListItem = nullptr;
+                            //selectedListItem = nullptr;
+                            //lastSelectedListItem = nullptr;
                             
                             //svcSleepThread(200'000);
                             //simulatedNextPage.store(false, std::memory_order_release);
@@ -6025,16 +6320,16 @@ public:
             freshSpawn = false;
         
         if (returningToMain && !(keysDown & KEY_B)){
-            selectedListItem = nullptr;
-            lastSelectedListItem = nullptr;
-            forwarderListItem = nullptr;
+            //selectedListItem = nullptr;
+            //lastSelectedListItem = nullptr;
+            //forwarderListItem = nullptr;
             returningToMain = false;
             inMainMenu = true;
         }
         if (returningToHiddenMain && !(keysDown & KEY_B)){
-            selectedListItem = nullptr;
-            lastSelectedListItem = nullptr;
-            forwarderListItem = nullptr;
+            //selectedListItem = nullptr;
+            //lastSelectedListItem = nullptr;
+            //forwarderListItem = nullptr;
             returningToHiddenMain = false;
             inHiddenMode = true;
         }
