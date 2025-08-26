@@ -584,6 +584,7 @@ private:
 
                 runningInterpreter.store(true, release);
                 executeInterpreterCommands(std::move(interpreterCommands), "", "");
+                listItem->disableClickAnimation();
                 //startInterpreterThread();
 
                 listItem->setValue(INPROGRESS_SYMBOL);
@@ -1165,7 +1166,7 @@ public:
             hideHidden = getBoolValue("hide_hidden", false); // FALSE_STR default
             createToggleListItem(list, SHOW_HIDDEN, hideHidden, "hide_hidden", true);
             hideDelete = getBoolValue("hide_delete", false); // FALSE_STR default
-            createToggleListItem(list, "Show Delete", hideDelete, "hide_delete", true);
+            createToggleListItem(list, SHOW_DELETE, hideDelete, "hide_delete", true);
             usePageSwap = getBoolValue("page_swap", false); // FALSE_STR default
             createToggleListItem(list, PAGE_SWAP, usePageSwap, "page_swap");
             rightAlignmentState = useRightAlignment = getBoolValue("right_alignment"); // FALSE_STR default
@@ -1243,8 +1244,10 @@ public:
         
         if (lastRunningInterpreter.load(acquire)) {
             isDownloadCommand.store(false, release);
-            if (lastSelectedListItem)
+            if (lastSelectedListItem) {
                 lastSelectedListItem->setValue(commandSuccess.load(acquire) ? CHECKMARK_SYMBOL : CROSSMARK_SYMBOL);
+                lastSelectedListItem->enableClickAnimation();
+            }
             closeInterpreterThread();
             lastRunningInterpreter.store(false, std::memory_order_release);
             return true;
@@ -1452,7 +1455,7 @@ public:
 
         addGap(list, 20);
 
-        auto* deleteListItem = new tsl::elm::ListItem("Hold \uE0E0 to Delete");
+        auto* deleteListItem = new tsl::elm::ListItem(HOLD_A_TO_DELETE);
         //deleteListItem->setValue("");
         
         deleteListItem->setClickListener([this, deleteListItem](uint64_t keys) -> bool {
@@ -1555,7 +1558,7 @@ public:
                     list->addItem(item);
                 }
             } else if (entryMode == PACKAGE_STR) {
-                auto* item = new tsl::elm::ListItem("Options");
+                auto* item = new tsl::elm::ListItem(OPTIONS);
                 item->setValue(DROPDOWN_SYMBOL);
                 item->setClickListener(navClick(entryName, entryMode, title, version, "options", item));
                 list->addItem(item);
@@ -2158,6 +2161,7 @@ private:
                 commandParts.shrink_to_fit();
 
                 executeInterpreterCommands(std::move(commandVec), filePath, specificKey);
+                listItem->disableClickAnimation();
                 //startInterpreterThread();
                 listItem->setValue(INPROGRESS_SYMBOL);
 
@@ -2319,8 +2323,10 @@ public:
         
         if (lastRunningInterpreter.load(acquire)) {
             isDownloadCommand.store(false, release);
-            if (lastSelectedListItem)
+            if (lastSelectedListItem) {
                 lastSelectedListItem->setValue(commandSuccess.load(acquire) ? CHECKMARK_SYMBOL : CROSSMARK_SYMBOL);
+                lastSelectedListItem->enableClickAnimation();
+            }
             closeInterpreterThread();
             lastRunningInterpreter.store(false, std::memory_order_release);
             return true;
@@ -3172,6 +3178,7 @@ public:
                         runningInterpreter.store(true, release);
     
                         executeInterpreterCommands(getSourceReplacement(selectionCommands, selectedItem, i, filePath), filePath, specificKey);
+                        listItem->disableClickAnimation();
                         //startInterpreterThread(filePath);
     
                         listItem->setValue(INPROGRESS_SYMBOL);
@@ -3373,8 +3380,10 @@ public:
         
         if (lastRunningInterpreter.load(acquire)) {
             isDownloadCommand.store(false, release);
-            if (lastSelectedListItem)
+            if (lastSelectedListItem) {
                 lastSelectedListItem->setValue(commandSuccess.load(acquire) ? CHECKMARK_SYMBOL : CROSSMARK_SYMBOL);
+                lastSelectedListItem->enableClickAnimation();
+            }
             closeInterpreterThread();
             lastRunningInterpreter.store(false, std::memory_order_release);
             return true;
@@ -4817,6 +4826,7 @@ bool drawCommandsMenu(
                                 runningInterpreter.store(true, release);
                                 executeInterpreterCommands(getSourceReplacement(commands, selectedItem, i, packagePath), packagePath, keyName);
                                 //startInterpreterThread(packagePath);
+                                listItem->disableClickAnimation();
                                 listItem->setValue(INPROGRESS_SYMBOL);
                                 
                                 //lastSelectedListItem = nullptr;
@@ -5180,6 +5190,8 @@ public:
                 }
                 else
                     lastSelectedListItem->setValue(commandSuccess ? CHECKMARK_SYMBOL : CROSSMARK_SYMBOL);
+
+                lastSelectedListItem->enableClickAnimation();
             }
     
             closeInterpreterThread();
@@ -5737,7 +5749,7 @@ public:
             inPackagesPage.store(false, std::memory_order_release);
             //closeInterpreterThread();
     
-            addHeader(list, (!inHiddenMode ? OVERLAYS : HIDDEN_OVERLAYS)+" "+DIVIDER_SYMBOL+" \uE0E3 "+SETTINGS+" "+DIVIDER_SYMBOL+" \uE0E2 Favorite");
+            addHeader(list, (!inHiddenMode ? OVERLAYS : HIDDEN_OVERLAYS)+" "+DIVIDER_SYMBOL+" \uE0E3 "+SETTINGS+" "+DIVIDER_SYMBOL+" \uE0E2 "+FAVORITE);
             
             
             // Load overlay files
@@ -6305,7 +6317,7 @@ public:
                 bool firstItem = true;
                 for (const auto& taintedPackageName : packageSet) {
                     if (firstItem) {
-                        addHeader(list, (!inHiddenMode ? PACKAGES : HIDDEN_PACKAGES)+" "+DIVIDER_SYMBOL+" \uE0E3 "+SETTINGS+" "+DIVIDER_SYMBOL+" \uE0E2 Favorite");
+                        addHeader(list, (!inHiddenMode ? PACKAGES : HIDDEN_PACKAGES)+" "+DIVIDER_SYMBOL+" \uE0E3 "+SETTINGS+" "+DIVIDER_SYMBOL+" \uE0E2 "+FAVORITE);
                         firstItem = false;
                     }
                     
@@ -6581,6 +6593,8 @@ public:
                 }
                 else
                     lastSelectedListItem->setValue(commandSuccess.load(acquire) ? CHECKMARK_SYMBOL : CROSSMARK_SYMBOL);
+                
+                lastSelectedListItem->enableClickAnimation();
             }
     
             closeInterpreterThread();
