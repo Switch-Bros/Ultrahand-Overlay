@@ -645,7 +645,8 @@ private:
                         {"del", EXPANSION_PATH + (actualState ? "nx-ovlloader+/" : "nx-ovlloader/")},
                         {"unzip", EXPANSION_PATH + (actualState ? "nx-ovlloader+.zip" : "nx-ovlloader.zip"),
                          EXPANSION_PATH + (actualState ? "nx-ovlloader+/" : "nx-ovlloader/")},
-                        {"mv", EXPANSION_PATH + (actualState ? "nx-ovlloader+/" : "nx-ovlloader/"), "/"}
+                        {"mv", EXPANSION_PATH + (actualState ? "nx-ovlloader+/" : "nx-ovlloader/"), "/"},
+                        {"notify", "Reboot is required."}
                     });
                 }
             //} else if (iniKey == "hide_clock" || iniKey == "hide_soc_temp" || iniKey == "hide_pcb_temp" ||
@@ -668,6 +669,17 @@ private:
             //    useLaunchCombos = !useLaunchCombos;
             //} else if (iniKey == "opaque_screenshots") {
             //    useOpaqueScreenshots = !useOpaqueScreenshots;
+            } else if (iniKey == "notifications") {
+                if (!state) {
+                    if (!ult::isFile(NOTIFICATIONS_FLAG_FILEPATH)) {
+                        FILE* file = std::fopen((NOTIFICATIONS_FLAG_FILEPATH).c_str(), "w");
+                        if (file) {
+                            std::fclose(file);
+                        }
+                    }
+                } else {
+                    deleteFileOrDirectory(NOTIFICATIONS_FLAG_FILEPATH);
+                }
             }
 
             state = !state;
@@ -829,6 +841,8 @@ public:
             }
         } else if (dropdownSelection == "softwareUpdateMenu") {
             const std::string fullVersionLabel = cleanVersionLabel(parseValueFromIniSection((SETTINGS_PATH+"RELEASE.ini"), "Release Info", "latest_version"));
+            if (isVersionGreaterOrEqual(fullVersionLabel.c_str(), APP_VERSION) && fullVersionLabel != APP_VERSION)
+                tsl::notification.show("New update is available! ("+fullVersionLabel+")", 24);
 
             addHeader(list, SOFTWARE_UPDATE);
             addUpdateButton(list, UPDATE_ULTRAHAND, ULTRAHAND_REPO_URL + "releases/latest/download/ovlmenu.ovl", "/config/ultrahand/downloads/ovlmenu.ovl", "/switch/.overlays/ovlmenu.ovl", fullVersionLabel);
@@ -1136,6 +1150,8 @@ public:
             addHeader(list, FEATURES);
             useLaunchCombos = getBoolValue("launch_combos", true); // TRUE_STR default
             createToggleListItem(list, LAUNCH_COMBOS, useLaunchCombos, "launch_combos");
+            useNotifications = getBoolValue("notifications", true); // TRUE_STR default
+            createToggleListItem(list, "Notifications", useNotifications, "notifications");
             useOpaqueScreenshots = getBoolValue("opaque_screenshots", true); // TRUE_STR default
             createToggleListItem(list, OPAQUE_SCREENSHOTS, useOpaqueScreenshots, "opaque_screenshots");
             useSwipeToOpen = getBoolValue("swipe_to_open", true); // TRUE_STR default
@@ -6039,7 +6055,7 @@ public:
                                 else
                                     tsl::setNextOverlay(overlayFile);
                                 
-                                tsl::Overlay::get()->close();
+                                tsl::Overlay::get()->close(true);
                                 
                                 return true;
                             } else if (keys & STAR_KEY && !(keys & ~STAR_KEY & ALL_KEYS_MASK)) {
@@ -6763,9 +6779,16 @@ public:
                         allowSlide.store(false, release);
                     if (unlockedSlide.load(acquire))
                         unlockedSlide.store(false, release);
-                    exitingUltrahand.store(true, release);
-                    tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
-                    tsl::Overlay::get()->close();
+                    if (!tsl::notification.isActive()) {
+                        exitingUltrahand.store(true, release);
+                        tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
+                        tsl::Overlay::get()->close();
+                    } else {
+                        tsl::Overlay::get()->closeAfter();
+                        tsl::Overlay::get()->hide(true);
+                    }
+
+                    
                     return true;
                 }
     
@@ -6875,6 +6898,7 @@ void initializeSettingsAndDirectories() {
     createDirectory(PACKAGE_PATH);
     createDirectory(LANG_PATH);
     createDirectory(FLAGS_PATH);
+    createDirectory(NOTIFICATIONS_PATH);
     createDirectory(THEMES_PATH);
     createDirectory(WALLPAPERS_PATH);
     
@@ -6941,6 +6965,7 @@ void initializeSettingsAndDirectories() {
     setDefaultValue("package_versions", TRUE_STR, usePackageVersions);
     setDefaultValue("memory_expansion", FALSE_STR, useMemoryExpansion);
     setDefaultValue("launch_combos", TRUE_STR, useLaunchCombos);
+    setDefaultValue("notifications", TRUE_STR, useNotifications);
     setDefaultValue("page_swap", FALSE_STR, usePageSwap);
     setDefaultValue("swipe_to_open", TRUE_STR, useSwipeToOpen);
     setDefaultValue("right_alignment", FALSE_STR, useRightAlignment);
@@ -7019,6 +7044,15 @@ void initializeSettingsAndDirectories() {
     if (needsUpdate) {
         saveIniFileData(ULTRAHAND_CONFIG_INI_PATH, iniData);
     }
+
+    if (useNotifications && !isFile(NOTIFICATIONS_FLAG_FILEPATH)) {
+        FILE* file = std::fopen((NOTIFICATIONS_FLAG_FILEPATH).c_str(), "w");
+        if (file) {
+            std::fclose(file);
+        }
+    } else {
+        deleteFileOrDirectory(NOTIFICATIONS_FLAG_FILEPATH);
+    }
     
     // Load language file
     const std::string langFile = LANG_PATH + defaultLang + ".json";
@@ -7077,7 +7111,7 @@ public:
             // initialize expanded memory on boot
             setIniFileValue(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "memory_expansion", (loaderTitle == "nx-ovlloader+") ? TRUE_STR : FALSE_STR);
 
-            tsl::gPrompt.show("Ultrahand has started.");
+            tsl::notification.show("Ultrahand has started.");
             
         }
         
