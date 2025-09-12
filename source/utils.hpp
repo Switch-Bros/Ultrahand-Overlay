@@ -4469,6 +4469,7 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
             }
         }
         exitingUltrahand.store(true, std::memory_order_release);
+        ult::launchingOverlay.store(true, std::memory_order_release);
         //setIniFileValue(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, IN_OVERLAY_STR, TRUE_STR); // this is handled within tesla.hpp
         tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
         tsl::Overlay::get()->close(true);
@@ -4669,8 +4670,24 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
                 else if (fontSize > 34) fontSize = 34;
 
             }
-            tsl::notification->show(text, fontSize);
+            if (tsl::notification)
+                tsl::notification->show(text, fontSize);
         }
+        //if (cmd.size() > 1) {
+        //    std::string text = cmd[1];
+        //    removeQuotes(text);
+        //    
+        //    size_t fontSize = 28;
+        //    if (cmd.size() > 2) {
+        //        std::string fontSizeStr = cmd[2];
+        //        removeQuotes(fontSizeStr);
+        //        fontSize = std::stoi(fontSizeStr);
+        //        fontSize = std::clamp(fontSize, size_t(1), size_t(34));
+        //    }
+        //    
+        //    // Push as cJSON
+        //    pushNotificationJson(text, fontSize);
+        //}
     } else if (commandName == "clear") {
         if (cmd.size() >= 2) {
             std::string clearOption = cmd[1];
@@ -4802,11 +4819,17 @@ int getInterpreterStackSize(const std::string& packagePath = "") {
     return cachedStackSize;
 }
 
+
+
 // Combined function - creates thread with work data directly
 void executeInterpreterCommands(std::vector<std::vector<std::string>>&& commands, 
                                const std::string& packagePath = "", 
                                const std::string& selectedCommand = "") {
     
+    // Wait for the existing thread to finish
+    threadWaitForExit(&interpreterThread);
+    threadClose(&interpreterThread);
+
     // Early exit if no commands
     if (commands.empty()) {
         return;

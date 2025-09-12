@@ -827,8 +827,9 @@ public:
             }
         } else if (dropdownSelection == "softwareUpdateMenu") {
             const std::string fullVersionLabel = cleanVersionLabel(parseValueFromIniSection((SETTINGS_PATH+"RELEASE.ini"), "Release Info", "latest_version"));
-            if (isVersionGreaterOrEqual(fullVersionLabel.c_str(), APP_VERSION) && fullVersionLabel != APP_VERSION)
+            if (isVersionGreaterOrEqual(fullVersionLabel.c_str(), APP_VERSION) && fullVersionLabel != APP_VERSION && tsl::notification) {
                 tsl::notification->show("New update is available! ("+fullVersionLabel+")", 24);
+            }
 
             addHeader(list, SOFTWARE_UPDATE);
             addUpdateButton(list, UPDATE_ULTRAHAND, ULTRAHAND_REPO_URL + "releases/latest/download/ovlmenu.ovl", "/config/ultrahand/downloads/ovlmenu.ovl", "/switch/.overlays/ovlmenu.ovl", fullVersionLabel);
@@ -1333,6 +1334,7 @@ public:
         
         if (triggerExit.load(acquire)) {
             triggerExit.store(false, release);
+            ult::launchingOverlay.store(true, std::memory_order_release);
             tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
             tsl::Overlay::get()->close();
         }
@@ -2091,6 +2093,7 @@ public:
     
         if (triggerExit.load(acquire)) {
             triggerExit.store(false, release);
+            ult::launchingOverlay.store(true, std::memory_order_release);
             tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
             tsl::Overlay::get()->close();
         }
@@ -2376,6 +2379,7 @@ public:
         
         if (triggerExit.load(acquire)) {
             triggerExit.store(false, release);
+            ult::launchingOverlay.store(true, std::memory_order_release);
             tsl::setNextOverlay(OVERLAY_PATH + "ovlmenu.ovl");
             tsl::Overlay::get()->close();
         }
@@ -3454,6 +3458,7 @@ public:
         
         if (triggerExit.load(acquire)) {
             triggerExit.store(false, release);
+            ult::launchingOverlay.store(true, std::memory_order_release);
             tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
             tsl::Overlay::get()->close();
         }
@@ -5342,6 +5347,7 @@ public:
                     while (!returnContextStack.empty()) {
                         returnContextStack.pop();
                     }
+                    ult::launchingOverlay.store(true, std::memory_order_release);
                     tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
                     exitingUltrahand.store(true, release);
                     tsl::Overlay::get()->close();
@@ -5533,6 +5539,7 @@ public:
             while (!returnContextStack.empty()) {
                 returnContextStack.pop();
             }
+            ult::launchingOverlay.store(true, std::memory_order_release);
             tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
             tsl::Overlay::get()->close();
         }
@@ -5540,6 +5547,7 @@ public:
         // Fallback for lost navigations
         if (backKeyPressed) {
             if (!selectedPackage.empty()) {
+                ult::launchingOverlay.store(true, std::memory_order_release);
                 exitingUltrahand.store(true, release);
                 tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
                 tsl::Overlay::get()->close();
@@ -5977,7 +5985,8 @@ public:
                             
     
                             if ((keys & KEY_A && !(keys & ~KEY_A & ALL_KEYS_MASK))) {
-                                
+                                //tsl::notificationGeneration.fetch_add(1, std::memory_order_release);
+
                                 //std::string useOverlayLaunchArgs = parseValueFromIniSection(OVERLAYS_INI_FILEPATH, overlayFileName, USE_LAUNCH_ARGS_STR);
                                 //std::string overlayLaunchArgs = parseValueFromIniSection(OVERLAYS_INI_FILEPATH, overlayFileName, LAUNCH_ARGS_STR);
 
@@ -6024,7 +6033,8 @@ public:
                                     saveIniFileData(ULTRAHAND_CONFIG_INI_PATH, iniData);
                                 }
 
-                                ult::launchingOverlay.store(true, release);
+                                ult::launchingOverlay.store(true, std::memory_order_release);
+
                                 if (useOverlayLaunchArgs == TRUE_STR)
                                     tsl::setNextOverlay(overlayFile, overlayLaunchArgs);
                                 else
@@ -6643,6 +6653,8 @@ public:
         if (inMainMenu.load(acquire) && !inHiddenMode && dropdownSection.empty()) {
             if (triggerMenuReload || triggerMenuReload2) {
                 triggerMenuReload = triggerMenuReload2 = false;
+
+                ult::launchingOverlay.store(true, std::memory_order_release);
                 //if (menuMode == PACKAGES_STR)
                 //    setIniFileValue(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "to_packages", FALSE_STR);
                 //
@@ -6755,13 +6767,15 @@ public:
                         allowSlide.store(false, release);
                     if (unlockedSlide.load(acquire))
                         unlockedSlide.store(false, release);
-                    if (!tsl::notification->isActive()) {
-                        exitingUltrahand.store(true, release);
-                        tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
-                        tsl::Overlay::get()->close();
-                    } else {
+                    if (tsl::notification && tsl::notification->isActive()) {
                         tsl::Overlay::get()->closeAfter();
                         tsl::Overlay::get()->hide(true);
+                    } else {
+                        ult::launchingOverlay.store(true, std::memory_order_release);
+                        exitingUltrahand.store(true, release);
+
+                        tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
+                        tsl::Overlay::get()->close();
                     }
 
                     
@@ -6855,6 +6869,7 @@ public:
     
         if (triggerExit.load(acquire)) {
             triggerExit.store(false, release);
+            ult::launchingOverlay.store(true, std::memory_order_release);
             tsl::setNextOverlay(OVERLAY_PATH+"ovlmenu.ovl");
             tsl::Overlay::get()->close();
         }
@@ -7075,8 +7090,16 @@ public:
         ASSERT_FATAL(socketInitializeDefault());
         initializeCurl();
 
+        unpackDeviceInfo();
+
         // read commands from root package's boot_package.ini
         if (firstBoot) {
+            // Delete all pending notification jsons
+            {
+                std::lock_guard<std::mutex> jsonLock(tsl::notificationJsonMutex);
+                deleteFileOrDirectoryByPattern(ult::NOTIFICATIONS_PATH + "*.notify");
+            }
+
             // Load and execute "initial_boot" commands if they exist
             executeIniCommands(PACKAGE_PATH + BOOT_PACKAGE_FILENAME, "boot");
             
@@ -7087,12 +7110,13 @@ public:
             // initialize expanded memory on boot
             setIniFileValue(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "memory_expansion", (loaderTitle == "nx-ovlloader+") ? TRUE_STR : FALSE_STR);
 
-            tsl::notification->show("Ultrahand has started.");
+            if (tsl::notification)
+                tsl::notification->show(CAPITAL_ULTRAHAND_PROJECT_NAME+" has started.");
             
         }
         
-        unpackDeviceInfo();
         
+        //startInterpreterThread();
     }
     
     /**
@@ -7103,6 +7127,8 @@ public:
      * properly shut down services to avoid memory leaks.
      */
     virtual void exitServices() override {
+        closeInterpreterThread(); // just in case ¯\_(ツ)_/¯
+
         if (exitingUltrahand.load(acquire))
             executeIniCommands(PACKAGE_PATH + EXIT_PACKAGE_FILENAME, "exit");
 
