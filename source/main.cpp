@@ -5288,7 +5288,7 @@ public:
                         lastSelectedListItem->setValue(success ? CHECKMARK_SYMBOL : CROSSMARK_SYMBOL);
                     } else {
                         // Determine the final state to save
-                        std::string finalState = success 
+                        const std::string finalState = success 
                             ? nextToggleState 
                             : (nextToggleState == CAPITAL_ON_STR ? CAPITAL_OFF_STR : CAPITAL_ON_STR);
                         
@@ -5315,6 +5315,12 @@ public:
             resetPercentages();
             lastRunningInterpreter.store(false, std::memory_order_release);
             return true;
+        }
+
+        if (ult::refreshWallpaperNow.load(std::memory_order_acquire)) {
+            closeInterpreterThread();
+            ult::refreshWallpaperNow.store(false, std::memory_order_release);
+            ult::reloadWallpaper();
         }
     
         if (goBackAfter.load(acquire)) {
@@ -6369,7 +6375,7 @@ public:
                         lastSelectedListItem->setValue(success ? CHECKMARK_SYMBOL : CROSSMARK_SYMBOL);
                     } else {
                         // Determine the final state to save
-                        std::string finalState = success 
+                        const std::string finalState = success 
                             ? nextToggleState 
                             : (nextToggleState == CAPITAL_ON_STR ? CAPITAL_OFF_STR : CAPITAL_ON_STR);
                         
@@ -6398,6 +6404,12 @@ public:
             return true;
         }
         
+        if (ult::refreshWallpaperNow.load(std::memory_order_acquire)) {
+            closeInterpreterThread();
+            ult::refreshWallpaperNow.store(false, std::memory_order_release);
+            ult::reloadWallpaper();
+        }
+
         if (goBackAfter.load(acquire)) {
             goBackAfter.store(false, std::memory_order_release);
             simulatedBack.store(true, release);
