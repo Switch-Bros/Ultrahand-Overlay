@@ -690,6 +690,7 @@ public:
 
     ~UltrahandSettingsMenu() {
         lastSelectedListItemFooter = "";
+        //tsl::elm::clearFrameCache();
     }
 
     virtual tsl::elm::Element* createUI() override {
@@ -1148,10 +1149,16 @@ public:
             createToggleListItem(list, LAUNCH_COMBOS, useLaunchCombos, "launch_combos");
             useNotifications = getBoolValue("notifications", true); // TRUE_STR default
             createToggleListItem(list, NOTIFICATIONS, useNotifications, "notifications");
+            useSoundEffects = getBoolValue("sound_effects", false); // TRUE_STR default
+            createToggleListItem(list, "Sound Effects", useSoundEffects, "sound_effects");
+            useHapticFeedback = getBoolValue("haptic_feedback", false); // FALSE_STR default
+            createToggleListItem(list, "Haptic Feedback", useHapticFeedback, "haptic_feedback");
             useOpaqueScreenshots = getBoolValue("opaque_screenshots", true); // TRUE_STR default
             createToggleListItem(list, OPAQUE_SCREENSHOTS, useOpaqueScreenshots, "opaque_screenshots");
             useSwipeToOpen = getBoolValue("swipe_to_open", true); // TRUE_STR default
             createToggleListItem(list, SWIPE_TO_OPEN, useSwipeToOpen, "swipe_to_open");
+            rightAlignmentState = useRightAlignment = getBoolValue("right_alignment"); // FALSE_STR default
+            createToggleListItem(list, RIGHT_SIDE_MODE, useRightAlignment, "right_alignment");
 
             addHeader(list, THEME_SETTINGS);
             useDynamicLogo = getBoolValue("dynamic_logo", true); // TRUE_STR default
@@ -1181,8 +1188,6 @@ public:
             createToggleListItem(list, SHOW_DELETE, hideDelete, "hide_delete", true);
             usePageSwap = getBoolValue("page_swap", false); // FALSE_STR default
             createToggleListItem(list, PAGE_SWAP, usePageSwap, "page_swap", false, true);
-            rightAlignmentState = useRightAlignment = getBoolValue("right_alignment"); // FALSE_STR default
-            createToggleListItem(list, RIGHT_SIDE_MODE, useRightAlignment, "right_alignment");
 
             hideOverlayVersions = getBoolValue("hide_overlay_versions", false); // FALSE_STR default
             createToggleListItem(list, OVERLAY_VERSIONS, hideOverlayVersions, "hide_overlay_versions", true, true);
@@ -1269,9 +1274,9 @@ public:
             return true;
         }
         
-        if (goBackAfter.load(acquire)) {
-            goBackAfter.store(false, std::memory_order_release);
-            simulatedBack.store(true, release);
+        if (goBackAfter.exchange(false, std::memory_order_acq_rel)) {
+            disableSound.store(true, std::memory_order_release);
+            simulatedBack.store(true, std::memory_order_release);
             return true;
         }
 
@@ -1395,6 +1400,7 @@ public:
             settingsMenuPageDepth--;
         }
         lastSelectedListItem = nullptr;
+        //tsl::elm::clearFrameCache();
     }
 
     void createAndAddToggleListItem(
@@ -1842,9 +1848,9 @@ public:
         //    return true;
         //}
         
-        if (goBackAfter.load(acquire)) {
-            goBackAfter.store(false, std::memory_order_release);
-            simulatedBack.store(true, release);
+        if (goBackAfter.exchange(false, std::memory_order_acq_rel)) {
+            disableSound.store(true, std::memory_order_release);
+            simulatedBack.store(true, std::memory_order_release);
             return true;
         }
 
@@ -1893,7 +1899,16 @@ public:
         // Handle delete item continuous hold behavior
         if (isHolding) {
             // Check if A key is still being held
-            if ((keysHeld & KEY_A) && !(keysHeld & ~KEY_A & ALL_KEYS_MASK)) {
+            if ((keysHeld & KEY_A)) {
+                if (keysDown & KEY_UP)
+                    lastSelectedListItem->shakeHighlight(tsl::FocusDirection::Up);
+                else if (keysDown & KEY_DOWN)
+                    lastSelectedListItem->shakeHighlight(tsl::FocusDirection::Down);
+                else if (keysDown & KEY_LEFT)
+                    lastSelectedListItem->shakeHighlight(tsl::FocusDirection::Left);
+                else if (keysDown & KEY_RIGHT)
+                    lastSelectedListItem->shakeHighlight(tsl::FocusDirection::Right);
+
                 // Update progress continuously using libnx timing
                 const u64 currentTick = armGetSystemTick();
                 const u64 elapsedTicks = currentTick - holdStartTick;
@@ -1901,7 +1916,10 @@ public:
                 const u64 elapsedMs = elapsedNs / 1000000; // Convert nanoseconds to milliseconds
                 const int percentage = std::min(100, static_cast<int>((elapsedMs / 5000.0) * 100));
                 displayPercentage.store(percentage, std::memory_order_release);
-                
+                if (percentage > 20 && percentage % 30 == 0) {
+                    triggerRumbleDoubleClick.store(true, std::memory_order_release);
+                }
+
                 // Check if we've reached 100%
                 if (percentage >= 100) {
                     isHolding = false;
@@ -1935,7 +1953,9 @@ public:
                             lastSelectedListItem->setValue(CHECKMARK_SYMBOL);
                             lastSelectedListItem = nullptr;
                         }
-                        
+                        triggerRumbleDoubleClick.store(true, std::memory_order_release);
+                        triggerMoveSound.store(true, std::memory_order_release);
+
                         runAfter = true; // perform transition after
                     } else {
                         // No valid target found
@@ -1950,6 +1970,8 @@ public:
                 
                 return true; // Continue holding
             } else {
+                triggerRumbleDoubleClick.store(true, std::memory_order_release);
+                triggerExitSound.store(true, std::memory_order_release);
                 // Key released - reset everything
                 isHolding = false;
                 displayPercentage.store(0, std::memory_order_release);
@@ -2152,6 +2174,9 @@ private:
     std::string lastPackageHeader;
     bool showWidget = false;
 
+    //u64 holdStartTick;
+    //bool isHolding = false;
+
     void addListItem(tsl::elm::List* list, const std::string& line) {
         auto* listItem = new tsl::elm::ListItem(line);
 
@@ -2209,10 +2234,18 @@ public:
     ScriptOverlay(std::vector<std::vector<std::string>>&& cmds, const std::string& file, const std::string& key = "",
         const std::string& fromMenu = "", bool tableMode = false, const std::string& _lastPackageHeader = "", bool showWidget = false)
         : commands(cmds), filePath(file), specificKey(key), tableMode(tableMode), lastPackageHeader(_lastPackageHeader), showWidget(showWidget) {
+
             isFromMainMenu = (fromMenu == "main");
             isFromPackage = (fromMenu == "package");
             isFromSelectionMenu = (fromMenu == "selection");
+            triggerRumbleClick.store(true, std::memory_order_release);
+            triggerSettingsSound.store(true, std::memory_order_release);
         }
+
+    ~ScriptOverlay() {
+        // reset cache (script overlay doesnt use it)
+        //tsl::elm::clearFrameCache();
+    }
 
     virtual tsl::elm::Element* createUI() override {
         inScriptMenu = true;
@@ -2328,8 +2361,36 @@ public:
                 drawTable(list, dummyTableData, sectionLines, infoLines, tableColumnOffset, tableStartGap, tableEndGap, tableSpacing,
                           tableSectionTextColor, tableInfoTextColor, tableInfoTextColor, tableAlignment, hideTableBackground, useHeaderIndent, isPolling, isScrollableTable, wrappingMode, useWrappedTextIndent);
             }
-            addDummyListItem(list);
+            //addDummyListItem(list);
         }
+
+       //addGap(list, 20);
+       //
+       //auto* deleteListItem = new tsl::elm::ListItem(HOLD_A_TO_DELETE);
+       ////deleteListItem->setValue("");
+       //
+       //deleteListItem->setClickListener([this, deleteListItem](uint64_t keys) -> bool {
+       //    if (runningInterpreter.load(std::memory_order_acquire))
+       //        return false;
+       //    
+       //    // Start holding when A key is first pressed
+       //    if ((keys & KEY_A) && !(keys & ~KEY_A & ALL_KEYS_MASK)) {
+       //        if (!isHolding) {
+       //            isHolding = true;
+       //            runningInterpreter.store(true, release);
+       //            deleteListItem->setValue(INPROGRESS_SYMBOL);
+       //            lastSelectedListItem = deleteListItem;
+       //            holdStartTick = armGetSystemTick();
+       //            displayPercentage.store(1, std::memory_order_release);
+       //        }
+       //        return true;
+       //    }
+       //    
+       //    return false;
+       //});
+       //deleteListItem->disableClickAnimation();
+       //
+       //list->addItem(deleteListItem);
 
         const std::string packageVersion = isFromMainMenu ? "" : packageRootLayerVersion;
 
@@ -2348,6 +2409,7 @@ public:
         
         const bool isRunningInterp = runningInterpreter.load(acquire);
         
+
         if (isRunningInterp) return handleRunningInterpreter(keysDown, keysHeld);
         
         if (lastRunningInterpreter.load(acquire)) {
@@ -2362,9 +2424,9 @@ public:
             return true;
         }
         
-        if (goBackAfter.load(acquire)) {
-            goBackAfter.store(false, std::memory_order_release);
-            simulatedBack.store(true, release);
+        if (goBackAfter.exchange(false, std::memory_order_acq_rel)) {
+            disableSound.store(true, std::memory_order_release);
+            simulatedBack.store(true, std::memory_order_release);
             return true;
         }
         
@@ -2537,6 +2599,7 @@ public:
 
     ~SelectionOverlay() {
         std::lock_guard<std::mutex> lock(transitionMutex);
+        //tsl::elm::clearFrameCache();
         //0lastSelectedListItemFooter2 = "";
         lastSelectedListItem = nullptr;
         //selectedFooterDict.clear();
@@ -2981,12 +3044,14 @@ public:
             //tsl::elm::ListItem* listItem = new tsl::elm::ListItem(EMPTY);
             //list->addItem(listItem);
 
-            addDummyListItem(list);
-            auto* warning = new tsl::elm::CustomDrawer([](tsl::gfx::Renderer* renderer, u16 x, u16 y, u16 w, u16 h){
-                renderer->drawString("\uE150", false, 180, 274+50, 90, (tsl::defaultTextColor));
-                renderer->drawString(SELECTION_IS_EMPTY, false, 110, 360+50, 25, (tsl::defaultTextColor));
-            });
-            list->addItem(warning);
+            //addDummyListItem(list);
+            //auto* warning = new tsl::elm::CustomDrawer([](tsl::gfx::Renderer* renderer, u16 x, u16 y, u16 w, u16 h){
+            //    renderer->drawString("\uE150", false, 180, 274+50, 90, (tsl::defaultTextColor));
+            //    renderer->drawString(SELECTION_IS_EMPTY, false, 110, 360+50, 25, (tsl::defaultTextColor));
+            //});
+            //list->addItem(warning);
+
+            addSelectionIsEmptyDrawer(list);
             noClickableItems = true;
         }
     
@@ -3447,9 +3512,9 @@ public:
             return true;
         }
         
-        if (goBackAfter.load(acquire)) {
-            goBackAfter.store(false, std::memory_order_release);
-            simulatedBack.store(true, release);
+        if (goBackAfter.exchange(false, std::memory_order_acq_rel)) {
+            disableSound.store(true, std::memory_order_release);
+            simulatedBack.store(true, std::memory_order_release);
             return true;
         }
         
@@ -5023,7 +5088,7 @@ bool drawCommandsMenu(
         //auto dummyItem = new tsl::elm::DummyListItem();
         //list->addItem(dummyItem, 0, 1);
         addDummyListItem(list, 1); // assuming a header is always above
-        addDummyListItem(list);
+        //addDummyListItem(list);
         //list->disableCaching(); // causes a visual glitch when entered fresh on return, may look into again later.
     }
 
@@ -5323,9 +5388,9 @@ public:
             ult::reloadWallpaper();
         }
     
-        if (goBackAfter.load(acquire)) {
-            goBackAfter.store(false, std::memory_order_release);
-            simulatedBack.store(true, release);
+        if (goBackAfter.exchange(false, std::memory_order_acq_rel)) {
+            disableSound.store(true, std::memory_order_release);
+            simulatedBack.store(true, std::memory_order_release);
             return true;
         }
     
@@ -5421,6 +5486,8 @@ public:
                             //lastPage = RIGHT_STR;
                             tsl::swapTo<PackageMenu>(packagePath, dropdownSection, RIGHT_STR, packageName, nestedLayer, pageHeader);
                             resetSlideState();
+                            triggerRumbleClick.store(true, std::memory_order_release);
+                            triggerNavigationSound.store(true, std::memory_order_release);
                         }
                         return true;
                     }
@@ -5434,6 +5501,8 @@ public:
                             //lastPage = LEFT_STR;
                             tsl::swapTo<PackageMenu>(packagePath, dropdownSection, LEFT_STR, packageName, nestedLayer, pageHeader);
                             resetSlideState();
+                            triggerRumbleClick.store(true, std::memory_order_release);
+                            triggerNavigationSound.store(true, std::memory_order_release);
                         }
                         return true;
                     }
@@ -5933,120 +6002,133 @@ public:
         std::string overlayFileName, overlayName, overlayVersion;
         bool usingLibUltrahand;
 
-        // Process overlay set and add to list
-        for (const auto& taintedOverlayFileName : overlaySet) {
-            overlayFileName = overlayName = overlayVersion = "";
-            const bool overlayStarred = (taintedOverlayFileName.substr(0, 3) == "-1:");
-            usingLibUltrahand = false;
-            
-            const size_t lastColonPos = taintedOverlayFileName.rfind(':');
-            if (lastColonPos != std::string::npos) {
-                usingLibUltrahand = (taintedOverlayFileName.substr(lastColonPos + 1) == "1");
-                const size_t secondLastColonPos = taintedOverlayFileName.rfind(':', lastColonPos - 1);
-                if (secondLastColonPos != std::string::npos) {
-                    overlayFileName = taintedOverlayFileName.substr(secondLastColonPos + 1, lastColonPos - secondLastColonPos - 1);
-                    const size_t thirdLastColonPos = taintedOverlayFileName.rfind(':', secondLastColonPos - 1);
-                    if (thirdLastColonPos != std::string::npos) {
-                        overlayVersion = taintedOverlayFileName.substr(thirdLastColonPos + 1, secondLastColonPos - thirdLastColonPos - 1);
-                        const size_t fourthLastColonPos = taintedOverlayFileName.rfind(':', thirdLastColonPos - 1);
-                        if (fourthLastColonPos != std::string::npos) {
-                            overlayName = taintedOverlayFileName.substr(fourthLastColonPos + 1, thirdLastColonPos - fourthLastColonPos - 1);
+        if (overlaySet.size() == 0) {
+            addSelectionIsEmptyDrawer(list);
+        } else {
+            // Process overlay set and add to list
+            for (const auto& taintedOverlayFileName : overlaySet) {
+                overlayFileName = overlayName = overlayVersion = "";
+                const bool overlayStarred = (taintedOverlayFileName.substr(0, 3) == "-1:");
+                usingLibUltrahand = false;
+                
+                const size_t lastColonPos = taintedOverlayFileName.rfind(':');
+                if (lastColonPos != std::string::npos) {
+                    usingLibUltrahand = (taintedOverlayFileName.substr(lastColonPos + 1) == "1");
+                    const size_t secondLastColonPos = taintedOverlayFileName.rfind(':', lastColonPos - 1);
+                    if (secondLastColonPos != std::string::npos) {
+                        overlayFileName = taintedOverlayFileName.substr(secondLastColonPos + 1, lastColonPos - secondLastColonPos - 1);
+                        const size_t thirdLastColonPos = taintedOverlayFileName.rfind(':', secondLastColonPos - 1);
+                        if (thirdLastColonPos != std::string::npos) {
+                            overlayVersion = taintedOverlayFileName.substr(thirdLastColonPos + 1, secondLastColonPos - thirdLastColonPos - 1);
+                            const size_t fourthLastColonPos = taintedOverlayFileName.rfind(':', thirdLastColonPos - 1);
+                            if (fourthLastColonPos != std::string::npos) {
+                                overlayName = taintedOverlayFileName.substr(fourthLastColonPos + 1, thirdLastColonPos - fourthLastColonPos - 1);
+                            }
                         }
                     }
                 }
-            }
-    
-            const std::string overlayFile = OVERLAY_PATH + overlayFileName;
-            if (!isFile(overlayFile)) continue;
-    
-            const std::string newOverlayName = overlayStarred ? STAR_SYMBOL+"  "+overlayName : overlayName;
-            const bool newStarred = !overlayStarred;
-    
-            tsl::elm::ListItem* listItem = new tsl::elm::ListItem(newOverlayName, "", false, false);
-            
-            overlayVersion = getFirstLongEntry(overlayVersion);
-            if (cleanVersionLabels) overlayVersion = cleanVersionLabel(overlayVersion);
-            
-            if (!hideOverlayVersions) {
-                listItem->setValue(overlayVersion, true);
-                listItem->setValueColor(usingLibUltrahand ? (useLibultrahandVersions ? tsl::ultOverlayVersionTextColor : tsl::overlayVersionTextColor) : tsl::overlayVersionTextColor);
-            }
-            listItem->setTextColor(usingLibUltrahand ? (useLibultrahandTitles ? tsl::ultOverlayTextColor : tsl::overlayTextColor) : tsl::overlayTextColor);
-    
-            if (overlayFileName == g_overlayFilename) {
-                jumpItemName = newOverlayName;
-                jumpItemValue = hideOverlayVersions ? "" : overlayVersion;
-                jumpItemExactMatch.store(true, release);
-            }
-    
-            listItem->setClickListener([overlayFile, newStarred, overlayFileName, overlayName, overlayVersion](s64 keys) {
-                if (runningInterpreter.load(acquire)) return false;
-    
-                if ((keys & KEY_A && !(keys & ~KEY_A & ALL_KEYS_MASK))) {
-                    std::string useOverlayLaunchArgs, overlayLaunchArgs;
-                    {
-                        auto overlaysIniData = getParsedDataFromIniFile(OVERLAYS_INI_FILEPATH);
-                        auto sectionIt = overlaysIniData.find(overlayFileName);
-                        if (sectionIt != overlaysIniData.end()) {
-                            auto useArgsIt = sectionIt->second.find(USE_LAUNCH_ARGS_STR);
-                            if (useArgsIt != sectionIt->second.end()) useOverlayLaunchArgs = useArgsIt->second;
-                            auto argsIt = sectionIt->second.find(LAUNCH_ARGS_STR);
-                            if (argsIt != sectionIt->second.end()) overlayLaunchArgs = argsIt->second;
-                        }
-                        removeQuotes(overlayLaunchArgs);
-                    }
-    
-                    {
-                        auto iniData = getParsedDataFromIniFile(ULTRAHAND_CONFIG_INI_PATH);
-                        auto& ultrahandSection = iniData[ULTRAHAND_PROJECT_NAME];
-                        if (inHiddenMode) ultrahandSection[IN_HIDDEN_OVERLAY_STR] = TRUE_STR;
-                        ultrahandSection[IN_OVERLAY_STR] = TRUE_STR;
-                        saveIniFileData(ULTRAHAND_CONFIG_INI_PATH, iniData);
-                    }
-    
-                    ult::launchingOverlay.store(true, std::memory_order_release);
-                    if (useOverlayLaunchArgs == TRUE_STR) tsl::setNextOverlay(overlayFile, overlayLaunchArgs);
-                    else tsl::setNextOverlay(overlayFile);
-                    tsl::Overlay::get()->close(true);
-                    return true;
-                } else if (keys & STAR_KEY && !(keys & ~STAR_KEY & ALL_KEYS_MASK)) {
-                    if (!overlayFile.empty()) {
-                        setIniFileValue(OVERLAYS_INI_FILEPATH, overlayFileName, STAR_STR, newStarred ? TRUE_STR : FALSE_STR);
-                    }
-                    skipJumpReset.store(true, release);
-                    jumpItemName = newStarred ? STAR_SYMBOL + "  " + overlayName : overlayName;
-                    jumpItemValue = hideOverlayVersions ? "" : overlayVersion;
-                    jumpItemExactMatch.store(true, release);
-                    g_overlayFilename = "";
-                    wasInHiddenMode = inHiddenMode;
-                    if (inHiddenMode) {
-                        inMainMenu.store(false, std::memory_order_release);
-                        inHiddenMode = true;
-                        reloadMenu2 = true;
-                    }
-                    refreshPage.store(true, release);
-                    return true;
-                } else if (keys & SETTINGS_KEY && !(keys & ~SETTINGS_KEY & ALL_KEYS_MASK)) {
-                    if (!inHiddenMode) {
-                        lastMenu = "";
-                        inMainMenu.store(false, std::memory_order_release);
-                    } else {
-                        lastMenu = "hiddenMenuMode";
-                        inHiddenMode = false;
-                    }
-                    jumpItemName = newStarred ? STAR_SYMBOL + "  " + overlayName : overlayName;
-                    jumpItemValue = hideOverlayVersions ? "" : overlayVersion;
-                    jumpItemExactMatch.store(true, release);
-                    g_overlayFilename = "";
-                    tsl::changeTo<SettingsMenu>(overlayFileName, OVERLAY_STR, overlayName, overlayVersion);
-                    return true;
-                }
-                return false;
-            });
-            list->addItem(listItem);
-        }
         
-        overlaySet.clear();
+                const std::string overlayFile = OVERLAY_PATH + overlayFileName;
+                if (!isFile(overlayFile)) continue;
+        
+                const std::string newOverlayName = overlayStarred ? STAR_SYMBOL+"  "+overlayName : overlayName;
+                const bool newStarred = !overlayStarred;
+        
+                tsl::elm::ListItem* listItem = new tsl::elm::ListItem(newOverlayName, "", false, false);
+                
+                overlayVersion = getFirstLongEntry(overlayVersion);
+                if (cleanVersionLabels) overlayVersion = cleanVersionLabel(overlayVersion);
+                
+                if (!hideOverlayVersions) {
+                    listItem->setValue(overlayVersion, true);
+                    listItem->setValueColor(usingLibUltrahand ? (useLibultrahandVersions ? tsl::ultOverlayVersionTextColor : tsl::overlayVersionTextColor) : tsl::overlayVersionTextColor);
+                }
+                listItem->setTextColor(usingLibUltrahand ? (useLibultrahandTitles ? tsl::ultOverlayTextColor : tsl::overlayTextColor) : tsl::overlayTextColor);
+        
+                if (overlayFileName == g_overlayFilename) {
+                    jumpItemName = newOverlayName;
+                    jumpItemValue = hideOverlayVersions ? "" : overlayVersion;
+                    jumpItemExactMatch.store(true, release);
+                }
+        
+                listItem->setClickListener([overlayFile, newStarred, overlayFileName, overlayName, overlayVersion](s64 keys) {
+                    if (runningInterpreter.load(acquire)) return false;
+        
+                    if ((keys & KEY_A && !(keys & ~KEY_A & ALL_KEYS_MASK))) {
+                        disableSound.store(true, std::memory_order_release);
+                        
+                        std::string useOverlayLaunchArgs, overlayLaunchArgs;
+                        {
+                            auto overlaysIniData = getParsedDataFromIniFile(OVERLAYS_INI_FILEPATH);
+                            auto sectionIt = overlaysIniData.find(overlayFileName);
+                            if (sectionIt != overlaysIniData.end()) {
+                                auto useArgsIt = sectionIt->second.find(USE_LAUNCH_ARGS_STR);
+                                if (useArgsIt != sectionIt->second.end()) useOverlayLaunchArgs = useArgsIt->second;
+                                auto argsIt = sectionIt->second.find(LAUNCH_ARGS_STR);
+                                if (argsIt != sectionIt->second.end()) overlayLaunchArgs = argsIt->second;
+                            }
+                            removeQuotes(overlayLaunchArgs);
+                        }
+        
+                        {
+                            auto iniData = getParsedDataFromIniFile(ULTRAHAND_CONFIG_INI_PATH);
+                            auto& ultrahandSection = iniData[ULTRAHAND_PROJECT_NAME];
+                            if (inHiddenMode) ultrahandSection[IN_HIDDEN_OVERLAY_STR] = TRUE_STR;
+                            ultrahandSection[IN_OVERLAY_STR] = TRUE_STR;
+                            saveIniFileData(ULTRAHAND_CONFIG_INI_PATH, iniData);
+                        }
+                        
+                        launchComboHasTriggered.store(true, std::memory_order_acquire); // for sound effect on exit isolation
+                        ult::launchingOverlay.store(true, std::memory_order_release);
+                        if (useOverlayLaunchArgs == TRUE_STR) tsl::setNextOverlay(overlayFile, overlayLaunchArgs);
+                        else tsl::setNextOverlay(overlayFile);
+
+
+                        tsl::Overlay::get()->close(true);
+                        return true;
+                    } else if (keys & STAR_KEY && !(keys & ~STAR_KEY & ALL_KEYS_MASK)) {
+                        if (!overlayFile.empty()) {
+                            setIniFileValue(OVERLAYS_INI_FILEPATH, overlayFileName, STAR_STR, newStarred ? TRUE_STR : FALSE_STR);
+                        }
+                        skipJumpReset.store(true, release);
+                        jumpItemName = newStarred ? STAR_SYMBOL + "  " + overlayName : overlayName;
+                        jumpItemValue = hideOverlayVersions ? "" : overlayVersion;
+                        jumpItemExactMatch.store(true, release);
+                        g_overlayFilename = "";
+                        wasInHiddenMode = inHiddenMode;
+                        if (inHiddenMode) {
+                            inMainMenu.store(false, std::memory_order_release);
+                            inHiddenMode = true;
+                            reloadMenu2 = true;
+                        }
+                        refreshPage.store(true, release);
+                        triggerRumbleClick.store(true, std::memory_order_release);
+                        triggerMoveSound.store(true, std::memory_order_release);
+                        return true;
+                    } else if (keys & SETTINGS_KEY && !(keys & ~SETTINGS_KEY & ALL_KEYS_MASK)) {
+                        if (!inHiddenMode) {
+                            lastMenu = "";
+                            inMainMenu.store(false, std::memory_order_release);
+                        } else {
+                            lastMenu = "hiddenMenuMode";
+                            inHiddenMode = false;
+                        }
+                        jumpItemName = newStarred ? STAR_SYMBOL + "  " + overlayName : overlayName;
+                        jumpItemValue = hideOverlayVersions ? "" : overlayVersion;
+                        jumpItemExactMatch.store(true, release);
+                        g_overlayFilename = "";
+                        tsl::changeTo<SettingsMenu>(overlayFileName, OVERLAY_STR, overlayName, overlayVersion);
+                        triggerRumbleClick.store(true, std::memory_order_release);
+                        triggerSettingsSound.store(true, std::memory_order_release);
+                        return true;
+                    }
+                    return false;
+                });
+                list->addItem(listItem);
+            }
+            
+            overlaySet.clear();
+        }
         
         if (drawHiddenTab && !inHiddenMode && !hideHidden) {
             tsl::elm::ListItem* listItem = new tsl::elm::ListItem(HIDDEN, DROPDOWN_SYMBOL);
@@ -6219,7 +6301,7 @@ public:
                             bool useBootPackage = true;
                             {
                                 const auto packagesIniData = getParsedDataFromIniFile(PACKAGES_INI_FILEPATH);
-                                auto sectionIt = packagesIniData.find(selectedPackage);
+                                auto sectionIt = packagesIniData.find(packageName);
                                 if (sectionIt != packagesIniData.end()) {
                                     auto bootIt = sectionIt->second.find(USE_BOOT_PACKAGE_STR);
                                     useBootPackage = (bootIt == sectionIt->second.end()) || (bootIt->second != FALSE_STR);
@@ -6262,6 +6344,8 @@ public:
                             reloadMenu2 = true;
                         }
                         refreshPage.store(true, release);
+                        triggerRumbleClick.store(true, std::memory_order_release);
+                        triggerMoveSound.store(true, std::memory_order_release);
                         return true;
                     } else if (keys & SETTINGS_KEY && !(keys & ~SETTINGS_KEY & ALL_KEYS_MASK)) {
                         if (!inHiddenMode) {
@@ -6276,6 +6360,8 @@ public:
                         jumpItemExactMatch.store(true, release);
                         g_overlayFilename = "";
                         tsl::changeTo<SettingsMenu>(packageName, PACKAGE_STR, newPackageName, packageVersion);
+                        triggerRumbleClick.store(true, std::memory_order_release);
+                        triggerSettingsSound.store(true, std::memory_order_release);
                         return true;
                     }
                     return false;
@@ -6410,9 +6496,9 @@ public:
             ult::reloadWallpaper();
         }
 
-        if (goBackAfter.load(acquire)) {
-            goBackAfter.store(false, std::memory_order_release);
-            simulatedBack.store(true, release);
+        if (goBackAfter.exchange(false, std::memory_order_acq_rel)) {
+            disableSound.store(true, std::memory_order_release);
+            simulatedBack.store(true, std::memory_order_release);
             return true;
         }
     
@@ -6537,6 +6623,8 @@ public:
                             //tsl::pop();
                             tsl::swapTo<MainMenu>();
                             resetNavState();
+                            triggerRumbleClick.store(true, std::memory_order_release);
+                            triggerNavigationSound.store(true, std::memory_order_release);
                         }
                         return true;
                     }
@@ -6559,6 +6647,8 @@ public:
                             //tsl::pop();
                             tsl::swapTo<MainMenu>();
                             resetNavState();
+                            triggerRumbleClick.store(true, std::memory_order_release);
+                            triggerNavigationSound.store(true, std::memory_order_release);
                         }
                         return true;
                     }
@@ -6591,6 +6681,8 @@ public:
                 if (!isTouching && (((keysDown & SYSTEM_SETTINGS_KEY && !(keysHeld & ~SYSTEM_SETTINGS_KEY & ALL_KEYS_MASK))) || simulatedMenu.exchange(false, acq_rel))) {
                     inMainMenu.store(false, std::memory_order_release);
                     tsl::changeTo<UltrahandSettingsMenu>();
+                    triggerRumbleClick.store(true, std::memory_order_release);
+                    triggerSettingsSound.store(true, std::memory_order_release);
                     return true;
                 }
             }
@@ -6759,6 +6851,8 @@ void initializeSettingsAndDirectories() {
     setDefaultValue("memory_expansion", FALSE_STR, useMemoryExpansion);
     setDefaultValue("launch_combos", TRUE_STR, useLaunchCombos);
     setDefaultValue("notifications", TRUE_STR, useNotifications);
+    setDefaultValue("sound_effects", TRUE_STR, useSoundEffects);
+    setDefaultValue("haptic_feedback", FALSE_STR, useHapticFeedback);
     setDefaultValue("page_swap", FALSE_STR, usePageSwap);
     setDefaultValue("swipe_to_open", TRUE_STR, useSwipeToOpen);
     setDefaultValue("right_alignment", FALSE_STR, useRightAlignment);
@@ -6889,8 +6983,15 @@ public:
     virtual void initServices() override {
         tsl::overrideBackButton = true; // for properly overriding the always go back functionality of KEY_B
 
-        ASSERT_FATAL(socketInitializeDefault());
-        initializeCurl();
+        // Retry socket initialization up to 3 times
+        for (uint8_t i = 0; i < 3; i++) {
+            if (R_SUCCEEDED(socketInitializeDefault())) {
+                initializeCurl();
+                break;
+            }
+            // Small delay between retries (10ms)
+            svcSleepThread(10'000'000ULL);
+        }
 
         unpackDeviceInfo();
 
