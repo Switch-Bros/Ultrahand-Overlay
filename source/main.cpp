@@ -328,7 +328,7 @@ private:
     int MAX_PRIORITY = 20;
     std::string comboLabel;
     //std::string lastSelectedListItemFooter = "";
-    bool notifyNow = false;
+    bool notifyRebootIsRequiredNow = false;
 
     bool rightAlignmentState;
 
@@ -621,7 +621,7 @@ private:
                               const bool invertLogic = false, const bool useReloadMenu = false, const bool useReloadMenu2 = false, const bool isMini = true) {
 
         auto* toggleListItem = new tsl::elm::ToggleListItem(title, invertLogic ? !state : state, ON, OFF, isMini);
-        toggleListItem->setStateChangedListener([this, &state, iniKey, invertLogic, useReloadMenu, useReloadMenu2, listItem = toggleListItem](bool newState) {
+        toggleListItem->setStateChangedListener([this, &state, iniKey, invertLogic, useReloadMenu, useReloadMenu2, listItem = toggleListItem, firstState = std::make_shared<std::optional<bool>>()](bool newState) {
             tsl::Overlay::get()->getCurrentGui()->requestFocus(listItem, tsl::FocusDirection::None);
             
             // Calculate the actual logical state first
@@ -629,10 +629,13 @@ private:
             
             setIniFileValue(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, iniKey, actualState ? TRUE_STR : FALSE_STR);
 
-            static bool firstState = actualState;
+            // Store actualState on first click
+            if (!firstState->has_value()) {
+                *firstState = actualState;
+            }
 
             if (iniKey == "page_swap") {
-                triggerMenuReload = firstState != state;
+                triggerMenuReload = firstState->value() != state;
             } else if (iniKey == "memory_expansion") {
                 if (!isFile(EXPANSION_PATH + "nx-ovlloader.zip")) {
                     if (isVersionGreaterOrEqual(amsVersion,"1.8.0"))
@@ -657,8 +660,8 @@ private:
                     //    {"unzip", EXPANSION_PATH + (actualState ? "nx-ovlloader+.zip" : "nx-ovlloader.zip"), "/"}
                     //    //{"notify", REBOOT_IS_REQUIRED}
                     //});
-                    if (unzipFile(EXPANSION_PATH + (actualState ? "nx-ovlloader+.zip" : "nx-ovlloader.zip"), "sdmc:/") && (firstState != state)) {
-                        notifyNow = true;
+                    if (unzipFile(EXPANSION_PATH + (actualState ? "nx-ovlloader+.zip" : "nx-ovlloader.zip"), "sdmc:/") && (firstState->value() != state)) {
+                        notifyRebootIsRequiredNow = true;
                     }
                 }
             } else if (iniKey == "right_alignment") {
@@ -854,8 +857,10 @@ public:
             }
         } else if (dropdownSelection == "softwareUpdateMenu") {
             const std::string fullVersionLabel = cleanVersionLabel(parseValueFromIniSection((SETTINGS_PATH+"RELEASE.ini"), "Release Info", "latest_version"));
+
             if (isVersionGreaterOrEqual(fullVersionLabel.c_str(), APP_VERSION) && fullVersionLabel != APP_VERSION && tsl::notification) {
-                tsl::notification->show(NEW_UPDATE_IS_AVAILABLE + " ("+fullVersionLabel+")", 24);
+                tsl::notification->show("  "+NEW_UPDATE_IS_AVAILABLE);
+            
             }
 
             addHeader(list, SOFTWARE_UPDATE);
@@ -870,11 +875,11 @@ public:
             overlayHeader.credits = "Special thanks to B3711, ComplexNarrative, ssky, MasaGratoR, meha, WerWolv, HookedBehemoth and many others. ♥";
             addPackageInfo(list, overlayHeader, OVERLAY_STR);
             overlayHeader.clear();
-
+        
         } else if (dropdownSelection == "systemMenu") {
             
-            // Version info formatting with a reduced buffer
-            char versionString[32];  // Reduced buffer size to 32
+            // Version info formatting - stack allocated, optimal size
+            char versionString[32];
             snprintf(versionString, sizeof(versionString), "HOS %sAMS %s", 
                      hosVersion, amsVersion);
             
@@ -885,6 +890,7 @@ public:
             SetSysProductModel model = SetSysProductModel_Invalid;
             setsysGetProductModel(&model);
             
+            // Switch is optimal for enum - generates jump table on ARMv8-A
             const char* modelRev;
             switch (model) {
                 case SetSysProductModel_Iowa: modelRev = "IowaTegra X1+ (Mariko)"; break;
@@ -895,16 +901,23 @@ public:
                 case SetSysProductModel_Copper: modelRev = "CopperTegra X1 (Erista)"; break;
                 default: modelRev = UNAVAILABLE_SELECTION.c_str(); break;
             }
-            //ASSERT_FATAL(nifmInitialize(NifmServiceType_User)); // for local IP
-            std::vector<std::vector<std::string>> tableData = {
+            
+            // Pre-allocate and reuse tableData - avoid repeated allocations
+            std::vector<std::vector<std::string>> tableData;
+            tableData.reserve(7); // Max size needed is 7 rows
+            
+            // Cache bootloader string to avoid redundant empty() check
+            const std::string bootloaderStr = hekateVersion.empty() ? "fusee" : "hekate " + hekateVersion;
+            
+            tableData = {
                 {FIRMWARE, "", versionString},
-                {BOOTLOADER, "", hekateVersion.empty() ? "fusee" : "hekate " + hekateVersion},
+                {BOOTLOADER, "", bootloaderStr},
                 {LOCAL_IP, "", getLocalIpAddress()}
             };
-            //nifmExit();
             addTable(list, tableData, "", 164, 20, 28, 4);
             
-            // Hardware and storage info
+            // Hardware and storage info - clear() is cheap, reuses capacity
+            tableData.clear();
             tableData = {
                 {HARDWARE, "", modelRev},
                 {MEMORY, "", memorySize},
@@ -917,68 +930,56 @@ public:
             addTable(list, tableData, "", 164, 20, 30, 4);
             
             // CPU, GPU, and SOC info
-            tableData = {
-                {"", "", "CPU      GPU      SOC"}
-            };
+            tableData.clear();
+            tableData = {{"", "", "CPU      GPU      SOC"}};
             addTable(list, tableData, "", 163, 9, 3, 0, DEFAULT_STR, "section", "section", RIGHT_STR, true);
             
             tableData.clear();
-            tableData.resize(2);
             
-            if (cpuSpeedo0 != 0 && cpuSpeedo2 != 0 && socSpeedo0 != 0 && cpuIDDQ != 0 && gpuIDDQ != 0 && socIDDQ != 0) {
-                tableData[0] = {
-                    "Speedo", "",
-                    customAlign(cpuSpeedo0) + " "+DIVIDER_SYMBOL+" " + customAlign(cpuSpeedo2) + " "+DIVIDER_SYMBOL+" " + customAlign(socSpeedo0)
-                };
-                tableData[1] = {
-                    "IDDQ", "",
-                    customAlign(cpuIDDQ) + " "+DIVIDER_SYMBOL+" " + customAlign(gpuIDDQ) + " "+DIVIDER_SYMBOL+" " + customAlign(socIDDQ)
+            // Branchless validation check - single bitwise OR instead of 6 comparisons
+            if ((cpuSpeedo0 | cpuSpeedo2 | socSpeedo0 | cpuIDDQ | gpuIDDQ | socIDDQ) != 0) {
+                tableData = {
+                    {"Speedo", "", customAlign(cpuSpeedo0) + " "+DIVIDER_SYMBOL+" " + customAlign(cpuSpeedo2) + " "+DIVIDER_SYMBOL+" " + customAlign(socSpeedo0)},
+                    {"IDDQ", "", customAlign(cpuIDDQ) + " "+DIVIDER_SYMBOL+" " + customAlign(gpuIDDQ) + " "+DIVIDER_SYMBOL+" " + customAlign(socIDDQ)}
                 };
             } else {
-                tableData[0] = {"Speedo", "", "⋯    "+DIVIDER_SYMBOL+"    ⋯    "+DIVIDER_SYMBOL+"    ⋯  "};
-                tableData[1] = {"IDDQ", "", "⋯    "+DIVIDER_SYMBOL+"    ⋯    "+DIVIDER_SYMBOL+"    ⋯  "};
+                tableData = {
+                    {"Speedo", "", "⋯    "+DIVIDER_SYMBOL+"    ⋯    "+DIVIDER_SYMBOL+"    ⋯  "},
+                    {"IDDQ", "", "⋯    "+DIVIDER_SYMBOL+"    ⋯    "+DIVIDER_SYMBOL+"    ⋯  "}
+                };
             }
             addTable(list, tableData, "", 164, 20, -2, 4);
             
-            // The part that was moved to the end
             addHeader(list, COMMANDS);
             
-            // Get system memory info and format it
+            // Get system memory info
             u64 RAM_Used_system_u, RAM_Total_system_u;
             svcGetSystemInfo(&RAM_Used_system_u, 1, INVALID_HANDLE, 2);
             svcGetSystemInfo(&RAM_Total_system_u, 0, INVALID_HANDLE, 2);
             
-            // Calculate free RAM and store in a smaller buffer
-            char ramString[24];  // Reduced buffer size to 24
-            float freeRamMB = (static_cast<float>(RAM_Total_system_u - RAM_Used_system_u) / (1024.0f * 1024.0f));
+            // Stack buffer for RAM string - optimal size
+            char ramString[24];
+            const float freeRamMB = static_cast<float>(RAM_Total_system_u - RAM_Used_system_u) / (1024.0f * 1024.0f);
             snprintf(ramString, sizeof(ramString), "%.2f MB %s", freeRamMB, FREE.c_str());
-
-            //std::string ramColor;
-            //if (freeRamMB >= 9.0f){
-            //    ramColor = "healthy_ram"; // Green: R=0, G=15, B=0
-            //} else if (freeRamMB >= 3.0f) {
-            //    ramColor = "neutral_ram"; // Orange-ish: R=15, G=10, B=0 → roughly RGB888: 255, 170, 0
-            //} else {
-            //    ramColor = "bad_ram"; // Red: R=15, G=0, B=0
-            //}
-            const std::string ramColor = freeRamMB >= 9.0f ? "healthy_ram" : freeRamMB >= 3.0f ? "neutral_ram" : "bad_ram";
             
-            // Reuse tableData with minimal reallocation
-            tableData = {
-                {NOTICE, "", UTILIZES + " 2 MB (" + ramString + ")"}
-            };
+            // Nested ternary compiles to conditional select (CSEL) on ARMv8-A - no branches
+            const char* ramColor = freeRamMB >= 9.0f ? "healthy_ram" : (freeRamMB >= 3.0f ? "neutral_ram" : "bad_ram");
+            
+            tableData.clear();
+            tableData = {{NOTICE, "", UTILIZES + " 2 MB (" + ramString + ")"}};
             addTable(list, tableData, "", 164, 8, 7, 0, DEFAULT_STR, DEFAULT_STR, ramColor, RIGHT_STR, true);
-            // Memory expansion toggle
-            useMemoryExpansion = (ult::expandedMemory || 
-                                  parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "memory_expansion") == TRUE_STR);
+            
+            // Memory expansion toggle - single evaluation, short-circuit OR
+            useMemoryExpansion = ult::expandedMemory || 
+                                 (parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "memory_expansion") == TRUE_STR);
             createToggleListItem(list, MEMORY_EXPANSION, useMemoryExpansion, "memory_expansion", false, false, false, false);
-
+            
             // Reboot required info
-            tableData = {
-                {"", "", REBOOT_REQUIRED}  // Direct reuse without reallocation
-            };
+            tableData.clear();
+            tableData = {{"", "", REBOOT_REQUIRED}};
             addTable(list, tableData, "", 164, 28, 0, 0, DEFAULT_STR, DEFAULT_STR, DEFAULT_STR, RIGHT_STR, true);
         
+                
         } else if (dropdownSelection == "themeMenu") {
             addHeader(list, THEME);
             std::string currentTheme = parseValueFromIniSection(ULTRAHAND_CONFIG_INI_PATH, ULTRAHAND_PROJECT_NAME, "current_theme");
@@ -1180,6 +1181,31 @@ public:
             rightAlignmentState = useRightAlignment = getBoolValue("right_alignment"); // FALSE_STR default
             createToggleListItem(list, RIGHT_SIDE_MODE, useRightAlignment, "right_alignment");
 
+
+            addHeader(list, MENU_SETTINGS);
+            hideUserGuide = getBoolValue("hide_user_guide", false); // FALSE_STR default
+            createToggleListItem(list, USER_GUIDE, hideUserGuide, "hide_user_guide", true, true, true);
+            hideHidden = getBoolValue("hide_hidden", false); // FALSE_STR default
+            createToggleListItem(list, SHOW_HIDDEN, hideHidden, "hide_hidden", true, true);
+            hideDelete = getBoolValue("hide_delete", false); // FALSE_STR default
+            createToggleListItem(list, SHOW_DELETE, hideDelete, "hide_delete", true);
+            if (requiresLNY2) {
+                //hideForceSupport = getBoolValue("hide_force_support", true); // FALSE_STR default
+                //createToggleListItem(list, "Show Force Support", hideForceSupport, "hide_force_support", true);
+                hideUnsupported = getBoolValue("hide_unsupported", false); // FALSE_STR default
+                createToggleListItem(list, SHOW_UNSUPPORTED, hideUnsupported, "hide_unsupported", true, true, true);
+            }
+            usePageSwap = getBoolValue("page_swap", false); // FALSE_STR default
+            createToggleListItem(list, PAGE_SWAP, usePageSwap, "page_swap", false, true);
+
+            hideOverlayVersions = getBoolValue("hide_overlay_versions", false); // FALSE_STR default
+            createToggleListItem(list, OVERLAY_VERSIONS, hideOverlayVersions, "hide_overlay_versions", true, true);
+            hidePackageVersions = getBoolValue("hide_package_versions", false); // FALSE_STR default
+            createToggleListItem(list, PACKAGE_VERSIONS, hidePackageVersions, "hide_package_versions", true, true);
+            cleanVersionLabels = getBoolValue("clean_version_labels", false); // FALSE_STR default
+            createToggleListItem(list, CLEAN_VERSIONS, cleanVersionLabels, "clean_version_labels", false, true, true);
+
+
             addHeader(list, THEME_SETTINGS);
             useDynamicLogo = getBoolValue("dynamic_logo", true); // TRUE_STR default
             createToggleListItem(list, DYNAMIC_LOGO, useDynamicLogo, "dynamic_logo");
@@ -1197,30 +1223,6 @@ public:
             createToggleListItem(list, PACKAGE_TITLES, usePackageTitles, "package_titles", false, true);
             usePackageVersions = getBoolValue("package_versions", true); // TRUE_STR default
             createToggleListItem(list, PACKAGE_VERSIONS, usePackageVersions, "package_versions", false, true);
-
-
-            addHeader(list, MENU_SETTINGS);
-            hideUserGuide = getBoolValue("hide_user_guide", false); // FALSE_STR default
-            createToggleListItem(list, USER_GUIDE, hideUserGuide, "hide_user_guide", true, true, true);
-            hideHidden = getBoolValue("hide_hidden", false); // FALSE_STR default
-            createToggleListItem(list, SHOW_HIDDEN, hideHidden, "hide_hidden", true, true);
-            hideDelete = getBoolValue("hide_delete", false); // FALSE_STR default
-            createToggleListItem(list, SHOW_DELETE, hideDelete, "hide_delete", true);
-            if (usingHOS21orHigher) {
-                //hideForceSupport = getBoolValue("hide_force_support", true); // FALSE_STR default
-                //createToggleListItem(list, "Show Force Support", hideForceSupport, "hide_force_support", true);
-                hideUnsupported = getBoolValue("hide_unsupported", false); // FALSE_STR default
-                createToggleListItem(list, "Show Unsupported", hideUnsupported, "hide_unsupported", true, true, true);
-            }
-            usePageSwap = getBoolValue("page_swap", false); // FALSE_STR default
-            createToggleListItem(list, PAGE_SWAP, usePageSwap, "page_swap", false, true);
-
-            hideOverlayVersions = getBoolValue("hide_overlay_versions", false); // FALSE_STR default
-            createToggleListItem(list, OVERLAY_VERSIONS, hideOverlayVersions, "hide_overlay_versions", true, true);
-            hidePackageVersions = getBoolValue("hide_package_versions", false); // FALSE_STR default
-            createToggleListItem(list, PACKAGE_VERSIONS, hidePackageVersions, "hide_package_versions", true, true);
-            cleanVersionLabels = getBoolValue("clean_version_labels", false); // FALSE_STR default
-            createToggleListItem(list, CLEAN_VERSIONS, cleanVersionLabels, "clean_version_labels", false, true, true);
 
             //addHeader(list, "Version Labels");
 
@@ -1315,15 +1317,15 @@ public:
             return true;
         }
 
-        if (notifyNow && tsl::notification) {
+        if (notifyRebootIsRequiredNow && tsl::notification) {
             static bool delayOnce = true;
 
             if (delayOnce) {
                 delayOnce = false;
             } else {
                 delayOnce = true;
-                notifyNow = false;
-                tsl::notification->show(REBOOT_IS_REQUIRED);
+                notifyRebootIsRequiredNow = false;
+                tsl::notification->show("  "+REBOOT_IS_REQUIRED);
             }
         }
 
@@ -1362,6 +1364,8 @@ public:
                     }
                     return true;
                 }
+            } else {
+                returningToSettings = false;
             }
         } else if (inSubSettingsMenu) {
             simulatedNextPage.exchange(false, std::memory_order_acq_rel);
@@ -1414,7 +1418,7 @@ class SettingsMenu : public tsl::Gui {
 private:
     std::string entryName, entryMode, title, version, dropdownSelection, settingsIniPath;
     
-    bool requiresHOS21Handling = false;
+    bool requiresAMS110Handling = false;
 
     bool isInSection, inQuotes, isFromMainMenu;
     int MAX_PRIORITY = 20;
@@ -1427,8 +1431,8 @@ private:
     bool deleteItemFocused = false;
 
 public:
-    SettingsMenu(const std::string& name, const std::string& mode, const std::string& title = "", const std::string& version = "", const std::string& selection = "", bool _requiresHOS21Handling = false)
-        : entryName(name), entryMode(mode), title(title), version(version), dropdownSelection(selection), requiresHOS21Handling(_requiresHOS21Handling) {
+    SettingsMenu(const std::string& name, const std::string& mode, const std::string& title = "", const std::string& version = "", const std::string& selection = "", bool _requiresAMS110Handling = false)
+        : entryName(name), entryMode(mode), title(title), version(version), dropdownSelection(selection), requiresAMS110Handling(_requiresAMS110Handling) {
             // Only store once
             if (settingsMenuPageDepth == 0) {
                rootEntryName = name;
@@ -1469,7 +1473,7 @@ public:
             }
             if (iniKey == "force_support") {
                 if (state && tsl::notification) {
-                    tsl::notification->show("  Forcing support can be dangerous.", 20);
+                    tsl::notification->show("  "+FORCED_SUPPORT_WARNING, 20);
                 }
             }
         });
@@ -1525,7 +1529,7 @@ public:
         //};
         //addTable(list, tableData, "", 165, 0, 10, 0, DEFAULT_STR, DEFAULT_STR, DEFAULT_STR, RIGHT_STR, true, false, false, true, "none", false);
 
-        addGap(list, 10);
+        addGap(list, 12);
 
         auto* deleteListItem = new tsl::elm::ListItem(HOLD_A_TO_DELETE);
         //deleteListItem->setValue("");
@@ -1629,9 +1633,9 @@ public:
                     item->setClickListener(navClick(entryName, entryMode, title, version, MODE_STR, item));
                     list->addItem(item);
                 }
-                //if (!hideForceSupport && usingHOS21orHigher && requiresHOS21Handling) {
-                if (usingHOS21orHigher && requiresHOS21Handling) {
-                    createAndAddToggleListItem(list, "Force HOS21 Support",
+                //if (!hideForceSupport && requiresLNY2 && requiresAMS110Handling) {
+                if (requiresLNY2 && requiresAMS110Handling) {
+                    createAndAddToggleListItem(list, FORCE_LNY2_SUPPORT,
                         false, "force_support", getValue("force_support"), settingsIniPath, entryName, true);
                 }
             } else if (entryMode == PACKAGE_STR) {
@@ -6038,7 +6042,7 @@ public:
                 
                 auto it = overlaysIniData.find(overlayFileName);
                 if (it == overlaysIniData.end()) {
-                    const auto& [result, overlayName, overlayVersion, usingLibUltrahand, supportsHOS21] = getOverlayInfo(OVERLAY_PATH + overlayFileName);
+                    const auto& [result, overlayName, overlayVersion, usingLibUltrahand, supportsAMS110] = getOverlayInfo(OVERLAY_PATH + overlayFileName);
                     if (result != ResultSuccess) continue;
     
                     auto& overlaySection = overlaysIniData[overlayFileName];
@@ -6052,37 +6056,29 @@ public:
                     overlaysNeedsUpdate = true;
     
                     // Build entry key with single allocation
-                    overlayEntryKey.clear();
-                    overlayEntryKey.reserve(4 + overlayName.size() + 1 + overlayName.size() + 1 + 
-                                           overlayVersion.size() + 1 + overlayFileName.size() + 8);
-                    overlayEntryKey = "0020";
-                    overlayEntryKey += overlayName;
-                    overlayEntryKey += ':';
-                    overlayEntryKey += overlayName;
-                    overlayEntryKey += ':';
-                    overlayEntryKey += overlayVersion;
-                    overlayEntryKey += ':';
-                    overlayEntryKey += overlayFileName;
-                    overlayEntryKey += ':';
-                    overlayEntryKey += (usingLibUltrahand ? '1' : '0');
-                    overlayEntryKey += ':';
-                    overlayEntryKey += (supportsHOS21 ? '1' : '0');
-                    overlayEntryKey += ":0";
+                    //overlayEntryKey.clear();
+                    //overlayEntryKey.reserve(4 + overlayName.size() + 1 + overlayName.size() + 1 + 
+                    //                       overlayVersion.size() + 1 + overlayFileName.size() + 8);
+
+                    overlayEntryKey = "0020" + overlayName + ':' + overlayName + ':' + 
+                                      overlayVersion + ':' + overlayFileName + ':' + 
+                                      (usingLibUltrahand ? '1' : '0') + ':' + 
+                                      (supportsAMS110 ? '1' : '0') + ":0";
                     overlaySet.emplace(std::move(overlayEntryKey));
                 } else {
                     const std::string& hide = getValueOrDefault(it->second, HIDE_STR, FALSE_STR);
                     const bool isHidden = (hide == TRUE_STR);
                     
                     if (isHidden) {
-                        if (!hideUnsupported || !usingHOS21orHigher || 
-                            hasHOS21Support(OVERLAY_PATH + overlayFileName) || 
+                        if (!hideUnsupported || !requiresLNY2 || 
+                            usingLNY2(OVERLAY_PATH + overlayFileName) || 
                             getValueOrDefault(it->second, "force_support", FALSE_STR) == TRUE_STR) {
                             drawHiddenTab = true;
                         }
                     }
                     
                     if ((!inHiddenMode && !isHidden) || (inHiddenMode && isHidden)) {
-                        const auto& [result, overlayName, overlayVersion, usingLibUltrahand, supportsHOS21] = getOverlayInfo(OVERLAY_PATH + overlayFileName);
+                        const auto& [result, overlayName, overlayVersion, usingLibUltrahand, supportsAMS110] = getOverlayInfo(OVERLAY_PATH + overlayFileName);
                         if (result != ResultSuccess) continue;
                         
                         const std::string& priority = (it->second.find(PRIORITY_STR) != it->second.end()) ? formatPriorityString(it->second[PRIORITY_STR]) : "0020";
@@ -6092,31 +6088,21 @@ public:
                         
                         const std::string& assignedName = !customName.empty() ? customName : overlayName;
                         const std::string& assignedVersion = !customVersion.empty() ? customVersion : overlayVersion;
-                        const bool forceHOS21Support = getValueOrDefault(it->second, "force_support", FALSE_STR) == TRUE_STR;
+                        const bool forceAMS110Support = getValueOrDefault(it->second, "force_support", FALSE_STR) == TRUE_STR;
     
                         // Build entry key with single allocation
-                        overlayEntryKey.clear();
-                        const bool isStarred = (starred == TRUE_STR);
-                        const size_t estimatedSize = (isStarred ? 3 : 0) + priority.size() + 
-                                                    assignedName.size() * 2 + assignedVersion.size() + 
-                                                    overlayFileName.size() + 10;
-                        overlayEntryKey.reserve(estimatedSize);
+                        //overlayEntryKey.clear();
+                        //const bool isStarred = (starred == TRUE_STR);
+                        //const size_t estimatedSize = (isStarred ? 3 : 0) + priority.size() + 
+                        //                            assignedName.size() * 2 + assignedVersion.size() + 
+                        //                            overlayFileName.size() + 10;
+                        //overlayEntryKey.reserve(estimatedSize);
                         
-                        if (isStarred) overlayEntryKey = "-1:";
-                        overlayEntryKey += priority;
-                        overlayEntryKey += assignedName;
-                        overlayEntryKey += ':';
-                        overlayEntryKey += assignedName;
-                        overlayEntryKey += ':';
-                        overlayEntryKey += assignedVersion;
-                        overlayEntryKey += ':';
-                        overlayEntryKey += overlayFileName;
-                        overlayEntryKey += ':';
-                        overlayEntryKey += (usingLibUltrahand ? '1' : '0');
-                        overlayEntryKey += ':';
-                        overlayEntryKey += (supportsHOS21 ? '1' : '0');
-                        overlayEntryKey += ':';
-                        overlayEntryKey += (forceHOS21Support ? '1' : '0');
+                        overlayEntryKey = (starred == TRUE_STR ? "-1:" : "") + priority + assignedName + ':' + 
+                                          assignedName + ':' + assignedVersion + ':' + overlayFileName + ':' + 
+                                          (usingLibUltrahand ? '1' : '0') + ':' + 
+                                          (supportsAMS110 ? '1' : '0') + ':' + 
+                                          (forceAMS110Support ? '1' : '0');
                         overlaySet.emplace(std::move(overlayEntryKey));
                     }
                 }
@@ -6148,8 +6134,8 @@ public:
                 overlayVersion.clear();
                 const bool overlayStarred = (taintedOverlayFileName.compare(0, 3, "-1:") == 0);
                 bool usingLibUltrahand = false;
-                bool supportsHOS21 = false;
-                bool forceHOS21Support = false;
+                bool supportsAMS110 = false;
+                bool forceAMS110Support = false;
                 
                 // Parse from the end - optimized with fewer branches
                 const size_t len = taintedOverlayFileName.size();
@@ -6166,16 +6152,16 @@ public:
                 
                 if (count == 6) {
                     // Direct character access instead of substr for single chars
-                    forceHOS21Support = (taintedOverlayFileName[positions[0] + 1] == '1');
-                    supportsHOS21 = (taintedOverlayFileName[positions[1] + 1] == '1');
+                    forceAMS110Support = (taintedOverlayFileName[positions[0] + 1] == '1');
+                    supportsAMS110 = (taintedOverlayFileName[positions[1] + 1] == '1');
                     usingLibUltrahand = (taintedOverlayFileName[positions[2] + 1] == '1');
                     overlayFileName.assign(taintedOverlayFileName, positions[3] + 1, positions[2] - positions[3] - 1);
                     overlayVersion.assign(taintedOverlayFileName, positions[4] + 1, positions[3] - positions[4] - 1);
                     overlayName.assign(taintedOverlayFileName, positions[5] + 1, positions[4] - positions[5] - 1);
                 }
     
-                const bool requiresHOS21Handling = (usingHOS21orHigher && !supportsHOS21 && !forceHOS21Support);
-                if (hideUnsupported && requiresHOS21Handling)
+                const bool requiresAMS110Handling = (requiresLNY2 && !supportsAMS110 && !forceAMS110Support);
+                if (hideUnsupported && requiresAMS110Handling)
                     continue;
     
                 const std::string overlayFile = OVERLAY_PATH + overlayFileName;
@@ -6204,7 +6190,7 @@ public:
                     listItem->setValue(displayVersion, true);
                     listItem->setValueColor(usingLibUltrahand ? (useLibultrahandVersions ? tsl::ultOverlayVersionTextColor : tsl::overlayVersionTextColor) : tsl::overlayVersionTextColor);
                 }
-                listItem->setTextColor(requiresHOS21Handling ? tsl::warningTextColor : usingLibUltrahand ? (useLibultrahandTitles ? tsl::ultOverlayTextColor : tsl::overlayTextColor) : tsl::overlayTextColor);
+                listItem->setTextColor(requiresAMS110Handling ? tsl::warningTextColor : usingLibUltrahand ? (useLibultrahandTitles ? tsl::ultOverlayTextColor : tsl::overlayTextColor) : tsl::overlayTextColor);
                 
                 if (overlayFileName == lastOverlayFilename) {
                     lastOverlayFilename = "";
@@ -6213,14 +6199,14 @@ public:
                     jumpItemExactMatch.store(true, std::memory_order_release);
                 }
                 
-                listItem->setClickListener([overlayFile, newStarred, overlayFileName, overlayName, overlayVersion, requiresHOS21Handling, supportsHOS21](s64 keys) {
+                listItem->setClickListener([overlayFile, newStarred, overlayFileName, overlayName, overlayVersion, requiresAMS110Handling, supportsAMS110](s64 keys) {
                     if (runningInterpreter.load(std::memory_order_acquire)) return false;
                     
                     if (simulatedMenu.load(std::memory_order_acquire)) {
                         keys |= SYSTEM_SETTINGS_KEY;
                     }
                     
-                    if ((keys & KEY_A && !(keys & ~KEY_A & ALL_KEYS_MASK)) && !requiresHOS21Handling) {
+                    if ((keys & KEY_A && !(keys & ~KEY_A & ALL_KEYS_MASK)) && !requiresAMS110Handling) {
                         disableSound.store(true, std::memory_order_release);
                         
                         std::string useOverlayLaunchArgs, overlayLaunchArgs;
@@ -6302,7 +6288,7 @@ public:
                         returnJumpItemName = returnName;
                         returnJumpItemValue = hideOverlayVersions ? "" : overlayVersion;
                         jumpItemName = jumpItemValue = "";
-                        tsl::changeTo<SettingsMenu>(overlayFileName, OVERLAY_STR, overlayName, overlayVersion, "", !supportsHOS21);
+                        tsl::changeTo<SettingsMenu>(overlayFileName, OVERLAY_STR, overlayName, overlayVersion, "", !supportsAMS110);
                         triggerRumbleClick.store(true, std::memory_order_release);
                         triggerSettingsSound.store(true, std::memory_order_release);
                         return true;
@@ -6324,7 +6310,7 @@ public:
                     }
                     return false;
                 });
-                if (requiresHOS21Handling) {
+                if (requiresAMS110Handling) {
                     listItem->isLocked = true;
                 }
                 listItem->disableClickAnimation();
@@ -7153,7 +7139,7 @@ void initializeSettingsAndDirectories() {
     setDefaultValue("hide_user_guide", FALSE_STR, hideUserGuide);
     setDefaultValue("hide_hidden", FALSE_STR, hideHidden);
     setDefaultValue("hide_delete", FALSE_STR, hideDelete);
-    if (usingHOS21orHigher) {
+    if (requiresLNY2) {
         //setDefaultValue("hide_force_support", TRUE_STR, hideForceSupport);
         setDefaultValue("hide_unsupported", FALSE_STR, hideUnsupported);
     }

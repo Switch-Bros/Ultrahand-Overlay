@@ -57,7 +57,7 @@ include $(DEVKITPRO)/libnx/switch_rules
 #---------------------------------------------------------------------------------
 APP_TITLE	:= Ultrahand
 APP_AUTHOR	:= ppkantorski
-APP_VERSION	:= 2.1.8-pre-release
+APP_VERSION	:= 2.1.8
 TARGET		:= ovlmenu
 BUILD		:= build
 SOURCES		:= source common
@@ -288,7 +288,6 @@ all : $(OUTPUT).ovl
 $(OUTPUT).ovl: $(OUTPUT).elf $(OUTPUT).nacp 
 	@elf2nro $< $@ $(NROFLAGS)
 	@echo "built ... $(notdir $(OUTPUT).ovl)"
-	@printf 'H21+' >> $@
 	@printf 'ULTR' >> $@
 	@printf "Ultrahand signature has been added.\n"
 
