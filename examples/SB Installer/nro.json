@@ -89,7 +89,13 @@
         "ordner": "NX-Activity-Log",
         "download-entry": "0"
     },
-    {
+	{
+        "name": "NX-DumpTool - neueste",
+        "nro-url": "https://api.github.com/repos/DarkMatterCore/nxdumptool/releases?per_page=1&sort=created&order=desc",
+        "ordner": "NX-DumoTool",
+        "download-entry": "0"
+    },
+	{
         "name": "NX-Locale-Switcher - neueste",
         "nro-url": "https://api.github.com/repos/HamletDuFromage/nx-locale-switcher/releases?per_page=1&sort=created&order=desc",
         "ordner": "NX-Locale-Switcher",
@@ -131,4 +137,5 @@
         "ordner": "vgedit",
         "download-entry": "0"
     }
+
 ]
