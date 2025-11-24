@@ -4315,6 +4315,28 @@ inline void setCommandFailed() {
     commandSuccess.store(false, std::memory_order_release);
 }
 
+void executeCommands(std::vector<std::vector<std::string>> commands) {
+    interpretAndExecuteCommands(std::move(commands), "", "");
+    resetPercentages();
+}
+
+void executeIniCommands(const std::string &iniPath, const std::string &section) {
+    if (isFileOrDirectory(iniPath)) {
+        auto commands = loadSpecificSectionFromIni(iniPath, section);
+        if (!commands.empty()) {
+            interpretAndExecuteCommands(std::move(commands), PACKAGE_PATH, section);
+            resetPercentages();
+        } else {
+            // Section not found or empty
+            setCommandFailed();
+        }
+    } else {
+        // INI file not found
+        setCommandFailed();
+    }
+}
+
+
 // Main processCommand function
 void processCommand(const std::vector<std::string>& cmd, const std::string& packagePath = "", const std::string& selectedCommand = "") {
     const std::string& commandName = cmd[0];
@@ -4414,7 +4436,7 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
             preprocessPath(destinationPath, packagePath);
             bool downloadSuccess = false;
 
-            if (!ult::limitedMemory) {
+            {
                 for (size_t i = 0; i < 3; ++i) {
                     downloadSuccess = downloadFile(fileUrl, destinationPath);
                     if (abortDownload.load(std::memory_order_acquire)) {
@@ -4471,20 +4493,25 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
         }
     } else if (commandName == "exec") {
         if (cmdSize >= 2) {
-            const std::string bootCommandName = getUnquoted(cmd, 1);
-            if (isFileOrDirectory(packagePath + BOOT_PACKAGE_FILENAME)) {
-                auto bootCommands = loadSpecificSectionFromIni(packagePath + BOOT_PACKAGE_FILENAME, bootCommandName);
+            const std::string sectionName = getUnquoted(cmd, 1);
             
-                if (!bootCommands.empty()) {
-                    bool resetCommandSuccess = false;
-                    if (!commandSuccess.load(std::memory_order_acquire)) 
-                        resetCommandSuccess = true;
-            
-                    interpretAndExecuteCommands(std::move(bootCommands), packagePath, bootCommandName);
-                    resetPercentages();
-                    if (resetCommandSuccess)
-                        setCommandFailed();
+            // Check if second argument is provided and is a path to an INI file
+            if (cmdSize >= 3) {
+                const std::string secondArg = getUnquoted(cmd, 2);
+                
+                if (secondArg.length() >= 4 && secondArg.substr(secondArg.length() - 4) == ".ini") {
+                    // Extended behavior: exec <section> <iniPath>
+                    std::string iniPath = secondArg;
+                    preprocessPath(iniPath, packagePath);
+                    
+                    executeIniCommands(iniPath, sectionName);
+                } else {
+                    // Second arg exists but is not an INI - default to boot package
+                    setCommandFailed();
                 }
+            } else {
+                // Default behavior: exec <section> - uses boot package
+                executeIniCommands(packagePath + BOOT_PACKAGE_FILENAME, sectionName);
             }
         }
     } else if (commandName == "reboot") {
@@ -4780,20 +4807,6 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
     }
 }
 
-void executeCommands(std::vector<std::vector<std::string>> commands) {
-    interpretAndExecuteCommands(std::move(commands), "", "");
-    resetPercentages();
-}
-
-void executeIniCommands(const std::string &iniPath, const std::string &section) {
-    if (isFileOrDirectory(iniPath)) {
-        auto commands = loadSpecificSectionFromIni(iniPath, section);
-        if (!commands.empty()) {
-            interpretAndExecuteCommands(std::move(commands), PACKAGE_PATH, section);
-            resetPercentages();
-        }
-    }
-}
 
 
 
@@ -4866,6 +4879,15 @@ void backgroundInterpreter(void* workPtr) {
     // Clean up work data
     delete workData;
     
+    if (ult::isHidden.load(std::memory_order_acquire)) {
+        if (tsl::notification) {
+            if (commandSuccess.load(std::memory_order_acquire))
+                tsl::notification->show(std::string("  ")+"Task has completed!");
+            else
+                tsl::notification->show(std::string("  ")+"Task has failed.");
+        }
+    }
+
     // Thread naturally exits here
 }
 
@@ -4938,7 +4960,7 @@ void executeInterpreterCommands(std::vector<std::vector<std::string>>&& commands
         return;
     }
 
-    if (ult::expandedMemory && ult::useSoundEffects) {
+    if (!ult::limitedMemory && ult::useSoundEffects) {
         //clearSoundCacheNow.store(true, std::memory_order_release);
         if (triggerEnterSound.exchange(false)) {
             ult::AudioPlayer::playEnterSound();
