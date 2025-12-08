@@ -1,5 +1,45 @@
 [
     {
+        "name": "710 mV",
+        "label": "710 mV - -140 mV",
+        "hex": "C602"
+    },
+    {
+        "name": "715 mV",
+        "label": "715 mV - -135 mV",
+        "hex": "CB02"
+    },
+    {
+        "name": "720 mV",
+        "label": "720 mV - -130 mV",
+        "hex": "D002"
+    },
+    {
+        "name": "725 mV",
+        "label": "725 mV - -125 mV",
+        "hex": "D502"
+    },
+    {
+        "name": "730 mV",
+        "label": "730 mV - -120 mV",
+        "hex": "DA02"
+    },
+    {
+        "name": "735 mV",
+        "label": "735 mV - -115 mV",
+        "hex": "DF02"
+    },
+    {
+        "name": "740 mV",
+        "label": "740 mV - -110 mV",
+        "hex": "E402"
+    },
+    {
+        "name": "745 mV",
+        "label": "745 mV - -105 mV",
+        "hex": "E902"
+    },
+    {
         "name": "750 mV",
         "label": "750 mV - -100 mV",
         "hex": "EE02"

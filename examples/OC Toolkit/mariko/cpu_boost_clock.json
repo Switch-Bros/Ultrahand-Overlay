@@ -41,7 +41,7 @@
     },
     {
         "name": "2601 MHz",
-        "label": "2601 MHz - unsafe",
+        "label": "2601 MHz",
         "hex": "28B027"
     }
 ]
