@@ -1100,7 +1100,7 @@ public:
             }
             
             // Get current heap size in MB
-            u32 currentHeapMB = bytesToMB(static_cast<u64>(currentHeapSize));
+            const u32 currentHeapMB = bytesToMB(static_cast<u64>(currentHeapSize));
             
             // Check if current heap is larger than 8MB but no INI entry exists
             // This handles the case where memory was set but INI was removed/not present
@@ -1208,7 +1208,7 @@ public:
                         }
                         setOverlayHeapSize(currentHeapSize);
                         this->exitOnBack = false;
-                        // Don't update lastSliderMB since change was rejected
+                        *lastSliderMB = newMB;
                         return;
                     }
                 }
@@ -2707,7 +2707,7 @@ public:
         auto* rootFrame = new tsl::elm::OverlayFrame(packageName,
            !lastPackageHeader.empty() ? lastPackageHeader + "?Ultrahand Script" : (packageVersion.empty() ? CAPITAL_ULTRAHAND_PROJECT_NAME + " Script" : packageVersion + " "+DIVIDER_SYMBOL+" " + CAPITAL_ULTRAHAND_PROJECT_NAME + " Script"),
            noClickableItems);
-        list->disableCaching();
+        list->disableCaching(!isFromSelectionMenu);
         rootFrame->setContent(list);
         if (showWidget)
             rootFrame->m_showWidget = true;
@@ -3261,7 +3261,7 @@ public:
         std::string currentPackageHeader;
         
     
-        if (commandMode == DEFAULT_STR || commandMode == OPTION_STR) {
+        if (commandMode == DEFAULT_STR || commandMode == OPTION_STR || commandMode == HOLD_STR) {
             if (sourceType == FILE_STR) {
                 selectedItemsList = std::move(filesList);
                 filesList.shrink_to_fit();
@@ -3399,7 +3399,7 @@ public:
         size_t pos;
         std::string parentDirName;
         std::string footer;
-        std::string optionName;
+        //std::string optionName;
     
         if (selectedItemsList.empty()) {
             if (commandGrouping != DEFAULT_STR) {
@@ -3581,7 +3581,7 @@ public:
             //    }
             }
     
-            if (commandMode == DEFAULT_STR || commandMode == OPTION_STR) {
+            if (commandMode == DEFAULT_STR || commandMode == OPTION_STR || commandMode == HOLD_STR) {
                 if (sourceType != FILE_STR && commandGrouping != "split2" && commandGrouping != "split3" && commandGrouping != "split4" && commandGrouping != "split5") {
                     pos = selectedItem.find(" - ");
                     footer = "";
@@ -3594,20 +3594,20 @@ public:
                     footer = getNameFromPath(selectedItem);
                     dropExtension(footer);
                 }
-    
+                
                 tsl::elm::ListItem* listItem = new tsl::elm::ListItem(itemName, "", isMini);
-    
+                
                 // for handling footers that use translations / replacements
                 applyLangReplacements(footer, true);
                 convertComboToUnicode(footer);
                 applyLangReplacements(specifiedFooterKey, true);
                 convertComboToUnicode(specifiedFooterKey);
-    
+                
                 applyLangReplacements(itemName, true);
                 convertComboToUnicode(itemName);
                 applyLangReplacements(selectedFooterDict[specifiedFooterKey], true);
                 convertComboToUnicode(selectedFooterDict[specifiedFooterKey]);
-    
+                
                 if (commandMode == OPTION_STR) {
                     if (selectedFooterDict[specifiedFooterKey] == itemName) {
                         lastSelectedListItem = listItem;
@@ -3623,24 +3623,39 @@ public:
                 } else {
                     listItem->setValue(footer, true);
                 }
-    
+
+                if (commandMode == HOLD_STR)
+                    listItem->disableClickAnimation();
+                
                 listItem->setClickListener([this, i, selectedItem, footer, listItem, currentPackageHeader, itemName](uint64_t keys) {
-    
+                    
                     if (runningInterpreter.load(acquire)) {
                         return false;
                     }
-    
+                    
                     if (((keys & KEY_A) && !(keys & ~KEY_A & ALL_KEYS_MASK))) {
                         
                         isDownloadCommand.store(false, release);
                         runningInterpreter.store(true, release);
-    
-                        executeInterpreterCommands(getSourceReplacement(selectionCommands, selectedItem, i, filePath), filePath, specificKey);
+                        
+                        auto modifiedCmds = getSourceReplacement(selectionCommands, selectedItem, i, filePath);
+                        if (commandMode == HOLD_STR) {
+                            lastSelectedListItemFooter = footer;
+                            listItem->setValue(INPROGRESS_SYMBOL);
+                            lastSelectedListItem = listItem;
+                            holdStartTick = armGetSystemTick();
+                            storedCommands = std::move(modifiedCmds);
+                            lastCommandMode = commandMode;
+                            lastKeyName = specificKey;
+                            return true;
+                        }
+
+                        executeInterpreterCommands(std::move(modifiedCmds), filePath, specificKey);
                         listItem->disableClickAnimation();
                         //startInterpreterThread(filePath);
-    
+                        
                         listItem->setValue(INPROGRESS_SYMBOL);
-    
+                        
                         
                         if (commandMode == OPTION_STR) {
                             selectedFooterDict[specifiedFooterKey] = listItem->getText();
@@ -3667,8 +3682,8 @@ public:
     
                         auto modifiedCmds = getSourceReplacement(selectionCommands, selectedItem, i, filePath);
                         applyPlaceholderReplacementsToCommands(modifiedCmds, filePath);
-                        tsl::elm::g_cachedTop.disabled = true;
-                        tsl::elm::g_cachedBottom.disabled = true;
+                        //tsl::elm::g_cachedTop.disabled = true;
+                        //tsl::elm::g_cachedBottom.disabled = true;
                         tsl::changeTo<ScriptOverlay>(std::move(modifiedCmds), filePath, itemName, "selection", false, currentPackageHeader, showWidget);
                         return true;
                     }
@@ -3777,8 +3792,8 @@ public:
                     // Custom logic for SCRIPT_KEY handling
                     auto modifiedCmds = getSourceReplacement(state ? selectionCommandsOn : selectionCommandsOff, currentSelectedItems[i], i, filePath);
                     applyPlaceholderReplacementsToCommands(modifiedCmds, filePath);
-                    tsl::elm::g_cachedTop.disabled = true;
-                    tsl::elm::g_cachedBottom.disabled = true;
+                    //tsl::elm::g_cachedTop.disabled = true;
+                    //tsl::elm::g_cachedBottom.disabled = true;
                     tsl::changeTo<ScriptOverlay>(std::move(modifiedCmds), filePath, itemName, "selection", false, currentPackageHeader, showWidget);
                 });
     
@@ -3836,7 +3851,7 @@ public:
     
         list->jumpToItem(jumpItemName, jumpItemValue, jumpItemExactMatch.load(acquire));
         
-        list->disableCaching();
+        list->disableCaching(true);
         rootFrame->setContent(list);
         if (showWidget)
             rootFrame->m_showWidget = true;
@@ -3846,6 +3861,25 @@ public:
 
     virtual bool handleInput(u64 keysDown, u64 keysHeld, touchPosition touchInput, JoystickPosition leftJoyStick, JoystickPosition rightJoyStick) override {
         
+        bool isHolding = (lastCommandMode == HOLD_STR && runningInterpreter.load(std::memory_order_acquire));
+        if (isHolding) {
+            processHold(keysDown, keysHeld, holdStartTick, isHolding, [&]() {
+                // Execute interpreter commands if needed
+                displayPercentage.store(-1, std::memory_order_release);
+                lastCommandMode.clear();
+                lastKeyName.clear();
+                lastSelectedListItem->setValue(INPROGRESS_SYMBOL);
+                //lastSelectedListItemFooter.clear();
+                //lastSelectedListItem->enableClickAnimation();
+                //lastSelectedListItem->triggerClickAnimation();
+                //lastSelectedListItem->disableClickAnimation();
+                triggerEnterFeedback();
+                executeInterpreterCommands(std::move(storedCommands), filePath, lastKeyName);
+                lastRunningInterpreter.store(true, std::memory_order_release);
+            }, nullptr, true); // true = reset storedCommands
+            return true;
+        }
+
         const bool isRunningInterp = runningInterpreter.load(acquire);
         
         if (isRunningInterp) {
@@ -7492,9 +7526,7 @@ void initializeSettingsAndDirectories() {
     std::map<std::string, std::map<std::string, std::string>> iniData;
 
     // Check if file didn't exist
-    if (!isFile(ULTRAHAND_CONFIG_INI_PATH)) {
-        updateMenuCombos = true;
-    } else {
+    if (isFile(ULTRAHAND_CONFIG_INI_PATH)) {
         // Always try to load INI data (will be empty if file doesn't exist)
         iniData = getParsedDataFromIniFile(ULTRAHAND_CONFIG_INI_PATH);
         for (int i = 0; i < 3; i++) {
@@ -7563,51 +7595,18 @@ void initializeSettingsAndDirectories() {
     
     setDefaultStrValue(DEFAULT_LANG_STR, defaultLang, defaultLang);
 
-    // Ensure certain settings are set in the INI file if they don't exist (in memory)
-    if (ultrahandSection.count("datetime_format") == 0) {
-        ultrahandSection["datetime_format"] = DEFAULT_DT_FORMAT;
-        needsUpdate = true;
-    }
-
-    if (ultrahandSection.count("hide_clock") == 0) {
-        ultrahandSection["hide_clock"] = FALSE_STR;
-        needsUpdate = true;
-    }
-
-    if (ultrahandSection.count("hide_battery") == 0) {
-        ultrahandSection["hide_battery"] = TRUE_STR;
-        needsUpdate = true;
-    }
-
-    if (ultrahandSection.count("hide_pcb_temp") == 0) {
-        ultrahandSection["hide_pcb_temp"] = TRUE_STR;
-        needsUpdate = true;
-    }
-
-    if (ultrahandSection.count("hide_soc_temp") == 0) {
-        ultrahandSection["hide_soc_temp"] = TRUE_STR;
-        needsUpdate = true;
-    }
-
-    if (ultrahandSection.count("dynamic_widget_colors") == 0) {
-        ultrahandSection["dynamic_widget_colors"] = TRUE_STR;
-        needsUpdate = true;
-    }
-
-    if (ultrahandSection.count("hide_widget_backdrop") == 0) {
-        ultrahandSection["hide_widget_backdrop"] = FALSE_STR;
-        needsUpdate = true;
-    }
-
-    if (ultrahandSection.count("center_widget_alignment") == 0) {
-        ultrahandSection["center_widget_alignment"] = TRUE_STR;
-        needsUpdate = true;
-    }
-
-    if (ultrahandSection.count("extended_widget_backdrop") == 0) {
-        ultrahandSection["extended_widget_backdrop"] = FALSE_STR;
-        needsUpdate = true;
-    }
+    // Widget settings - now properly loaded into variables
+    setDefaultValue("hide_clock", FALSE_STR, hideClock);
+    setDefaultValue("hide_battery", TRUE_STR, hideBattery);
+    setDefaultValue("hide_pcb_temp", TRUE_STR, hidePCBTemp);
+    setDefaultValue("hide_soc_temp", TRUE_STR, hideSOCTemp);
+    setDefaultValue("dynamic_widget_colors", TRUE_STR, dynamicWidgetColors);
+    setDefaultValue("hide_widget_backdrop", FALSE_STR, hideWidgetBackdrop);
+    setDefaultValue("center_widget_alignment", TRUE_STR, centerWidgetAlignment);
+    setDefaultValue("extended_widget_backdrop", FALSE_STR, extendedWidgetBackdrop);
+    
+    // Datetime format string setting
+    setDefaultStrValue("datetime_format", DEFAULT_DT_FORMAT, datetimeFormat);
     
     // Check if settings were previously loaded
     settingsLoaded = ultrahandSection.count(IN_OVERLAY_STR) > 0;
@@ -7658,7 +7657,7 @@ void initializeSettingsAndDirectories() {
     // Initialize theme
     initializeTheme();
     tsl::initializeThemeVars();
-    copyTeslaKeyComboToUltrahand();
+    updateMenuCombos = copyTeslaKeyComboToUltrahand();
     
     // Set current menu based on settings
     static bool hasInitialized = false;
@@ -7826,15 +7825,6 @@ public:
     virtual void initServices() override {
         tsl::overrideBackButton = true; // for properly overriding the always go back functionality of KEY_B
 
-        // Retry socket initialization up to 3 times
-        //if (R_SUCCEEDED(socketInitializeDefault())) {
-            //initializeCurl();
-        //}
-        //if (!ult::limitedMemory)
-        //    socketInitializeDefault();
-        //else {
-        //    socketInitialize(&socketInitConfig);
-        //}
         constexpr SocketInitConfig socketInitConfig = {
             // TCP buffers
             .tcp_tx_buf_size     = 16 * 1024,   // 16 KB default
