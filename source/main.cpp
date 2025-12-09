@@ -2707,7 +2707,7 @@ public:
         auto* rootFrame = new tsl::elm::OverlayFrame(packageName,
            !lastPackageHeader.empty() ? lastPackageHeader + "?Ultrahand Script" : (packageVersion.empty() ? CAPITAL_ULTRAHAND_PROJECT_NAME + " Script" : packageVersion + " "+DIVIDER_SYMBOL+" " + CAPITAL_ULTRAHAND_PROJECT_NAME + " Script"),
            noClickableItems);
-        list->disableCaching(!isFromSelectionMenu);
+        //list->disableCaching(!isFromSelectionMenu);
         rootFrame->setContent(list);
         if (showWidget)
             rootFrame->m_showWidget = true;
@@ -2960,20 +2960,24 @@ public:
         
         for (auto& cmd : selectionCommands) {
 
-            if (afterSource) {
-                // Apply placeholder replacements in-place
-                for (auto& arg : cmd) {
-                    replacePlaceholdersInArg(arg, generalPlaceholders);
-                }
-                static bool runOnce = true;
-                if (runOnce) {
-                    _iniFilePath = "";
-                    _hexFilePath = "";
-                    _listString = "";
-                    _listFilePath = "";
-                    _jsonString = "";
-                    _jsonFilePath = "";
-                }
+            //if (afterSource) {
+            //    // Apply placeholder replacements in-place
+            //    for (auto& arg : cmd) {
+            //        replacePlaceholdersInArg(arg, generalPlaceholders);
+            //    }
+            //    static bool runOnce = true;
+            //    if (runOnce) {
+            //        _iniFilePath = "";
+            //        _hexFilePath = "";
+            //        _listString = "";
+            //        _listFilePath = "";
+            //        _jsonString = "";
+            //        _jsonFilePath = "";
+            //    }
+            //}
+            // Apply placeholder replacements in-place
+            for (auto& arg : cmd) {
+                replacePlaceholdersInArg(arg, generalPlaceholders);
             }
 
             const std::string& commandName = cmd[0]; // Now assigns to string_view - no copy
@@ -3790,7 +3794,7 @@ public:
     
                     //inSelectionMenu = false;
                     // Custom logic for SCRIPT_KEY handling
-                    auto modifiedCmds = getSourceReplacement(state ? selectionCommandsOn : selectionCommandsOff, currentSelectedItems[i], i, filePath);
+                    auto modifiedCmds = getSourceReplacement(!state ? selectionCommandsOn : selectionCommandsOff, currentSelectedItems[i], i, filePath);
                     applyPlaceholderReplacementsToCommands(modifiedCmds, filePath);
                     //tsl::elm::g_cachedTop.disabled = true;
                     //tsl::elm::g_cachedBottom.disabled = true;
@@ -3851,7 +3855,7 @@ public:
     
         list->jumpToItem(jumpItemName, jumpItemValue, jumpItemExactMatch.load(acquire));
         
-        list->disableCaching(true);
+        //list->disableCaching(true);
         rootFrame->setContent(list);
         if (showWidget)
             rootFrame->m_showWidget = true;
