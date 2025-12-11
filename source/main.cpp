@@ -372,22 +372,16 @@ bool processHold(uint64_t keysDown, uint64_t keysHeld, u64& holdStartTick, bool&
         isHolding = false;
         displayPercentage.store(0, std::memory_order_release);
         runningInterpreter.store(false, std::memory_order_release);
-        if (resetStoredCommands) {
-            storedCommands.clear();
-            lastCommandMode.clear();
-            lastCommandIsHold = false;
-            lastKeyName.clear();
-        }
         if (lastSelectedListItem) {
             if (resetStoredCommands) {
                 // Use lastFooterHighlightDefined to determine the highlight parameter
                 // If not defined, infer from lastCommandMode
-                bool highlightParam;
+                bool highlightParam = true;
                 if (lastFooterHighlightDefined) {
                     highlightParam = !lastFooterHighlight;
                 } else {
                     // Default behavior based on command mode
-                    highlightParam = (lastCommandMode == DEFAULT_STR);
+                    highlightParam = !(lastCommandMode == SLOT_STR || lastCommandMode == OPTION_STR) || lastCommandMode.empty();
                 }
                 lastSelectedListItem->setValue(lastSelectedListItemFooter, highlightParam);
                 lastSelectedListItemFooter.clear();
@@ -397,6 +391,13 @@ bool processHold(uint64_t keysDown, uint64_t keysHeld, u64& holdStartTick, bool&
             lastSelectedListItem = nullptr;
             lastFooterHighlight = lastFooterHighlightDefined = false;
         }
+        if (resetStoredCommands) {
+            storedCommands.clear();
+            lastCommandMode.clear();
+            lastCommandIsHold = false;
+            lastKeyName.clear();
+        }
+        
         if (onRelease) onRelease();
         return true;
     }
@@ -4182,6 +4183,84 @@ struct ReturnContext {
 
 //static std::vector<std::vector<std::string>> storedCommands;
 
+struct CommandSettings {
+    bool isMini = false;
+    bool isSlot = false;
+};
+
+static CommandSettings parseCommandSettings(std::vector<std::vector<std::string>>& commands) {
+    CommandSettings settings;
+    
+    if (commands.empty() || commands.size() > 2) {
+        return settings;
+    }
+    
+    bool foundMini = false;
+    bool foundMode = false;
+    bool modeIsSlot = false;
+    bool miniValue = false;
+    
+    for (const auto& command : commands) {
+        //if (!command.empty()) {
+        {
+            const std::string& commandName = command[0];
+            const size_t cmdLen = commandName.length();
+            
+            if (cmdLen > 1 && commandName[0] == ';' && commandName[1] == 'm') {
+                // Check for ;mini=
+                if (!foundMini && cmdLen >= MINI_PATTERN_LEN + TRUE_STR_LEN && commandName[2] == 'i') {
+                    if (commandName.compare(0, MINI_PATTERN_LEN, MINI_PATTERN) == 0) {
+                        switch (commandName[MINI_PATTERN_LEN]) {
+                            case 't':
+                                if (commandName.compare(MINI_PATTERN_LEN, TRUE_STR_LEN, TRUE_STR) == 0) {
+                                    foundMini = true;
+                                    miniValue = true;
+                                }
+                                break;
+                            case 'f':
+                                if (commandName.compare(MINI_PATTERN_LEN, FALSE_STR_LEN, FALSE_STR) == 0) {
+                                    foundMini = true;
+                                    miniValue = false;
+                                }
+                                break;
+                        }
+                    }
+                }
+                
+                // Check for ;mode=
+                if (!foundMode && cmdLen >= MODE_PATTERN_LEN + SLOT_STR.length() && commandName[2] == 'o') {
+                    if (commandName.compare(0, MODE_PATTERN_LEN, MODE_PATTERN) == 0) {
+                        foundMode = true;
+                        if (commandName[MODE_PATTERN_LEN] == 's') {
+                            modeIsSlot = (commandName.compare(MODE_PATTERN_LEN, SLOT_STR.length(), SLOT_STR) == 0);
+                        }
+                    }
+                }
+                
+                if (foundMini && foundMode) {
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Apply the settings
+    if (foundMini) {
+        settings.isMini = miniValue;
+    } else if (modeIsSlot) {
+        settings.isSlot = true;
+    }
+    
+    // Determine if commands should be cleared
+    const bool shouldClearCommands = (commands.size() == 1 && (foundMini || foundMode)) ||
+                                   (commands.size() == 2 && foundMini && foundMode);
+    
+    if (shouldClearCommands) {
+        commands.clear();
+    }
+    
+    return settings;
+}
 
 //ReturnContext returnTo;
 static std::stack<ReturnContext> returnContextStack;
@@ -4307,7 +4386,7 @@ bool drawCommandsMenu(
         //option.second.shrink_to_fit();
 
         // Remove all empty command strings
-        //removeEmptyCommands(commands);
+        removeEmptyCommands(commands);
 
         //option.first.clear();
         //option.second.clear();
@@ -4386,69 +4465,9 @@ bool drawCommandsMenu(
                     }
                 }
                 if (optionName.front() == '*' && commands.size() > 0 && commands.size() <= 2) {
-                    bool foundMini = false;
-                    bool foundMode = false;
-                    bool modeIsSlot = false;
-                    bool miniValue = false;
-                    
-                    for (const auto& command : commands) {
-                        if (!command.empty()) {
-                            const std::string& commandName = command[0];
-                            const size_t cmdLen = commandName.length();
-                            
-                            if (cmdLen > 1 && commandName[0] == ';' && commandName[1] == 'm') {
-                                // Check for ;mini=
-                                if (!foundMini && cmdLen >= MINI_PATTERN_LEN + TRUE_STR_LEN && commandName[2] == 'i') {
-                                    if (commandName.compare(0, MINI_PATTERN_LEN, MINI_PATTERN) == 0) {
-                                        switch (commandName[MINI_PATTERN_LEN]) {
-                                            case 't':
-                                                if (commandName.compare(MINI_PATTERN_LEN, TRUE_STR_LEN, TRUE_STR) == 0) {
-                                                    foundMini = true;
-                                                    miniValue = true;
-                                                }
-                                                break;
-                                            case 'f':
-                                                if (commandName.compare(MINI_PATTERN_LEN, FALSE_STR_LEN, FALSE_STR) == 0) {
-                                                    foundMini = true;
-                                                    miniValue = false;
-                                                }
-                                                break;
-                                        }
-                                    }
-                                }
-                                
-                                // Check for ;mode=
-                                if (!foundMode && cmdLen >= MODE_PATTERN_LEN + SLOT_STR.length() && commandName[2] == 'o') {
-                                    if (commandName.compare(0, MODE_PATTERN_LEN, MODE_PATTERN) == 0) {
-                                        foundMode = true;
-                                        if (commandName[MODE_PATTERN_LEN] == 's') {
-                                            modeIsSlot = (commandName.compare(MODE_PATTERN_LEN, SLOT_STR.length(), SLOT_STR) == 0);
-                                        }
-                                    }
-                                }
-                                
-                                if (foundMini && foundMode) {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    
-                    // Apply the settings
-                    if (foundMini) {
-                        isMini = miniValue;
-                    } else if (modeIsSlot) {
-                        isSlot = true;
-                    }
-                    
-                    // Clear commands only when we've actually processed something
-                    const bool shouldClear = (commands.size() == 1 && (foundMini || foundMode)) ||
-                                       (commands.size() == 2 && foundMini && foundMode);
-                    
-                    if (shouldClear) {
-                        commands.clear();
-                        // commands.shrink_to_fit(); // Uncomment if needed
-                    }
+                     auto settings = parseCommandSettings(commands);
+                     isMini = settings.isMini;
+                     isSlot = settings.isSlot;
                 }
                 if (commands.size() == 0) {
                     if (optionName == dropdownSection)
@@ -4460,69 +4479,9 @@ bool drawCommandsMenu(
             } else {
                                 
                 if (optionName.front() == '*' && commands.size() > 0 && commands.size() <= 2) {
-                    bool foundMini = false;
-                    bool foundMode = false;
-                    bool modeIsSlot = false;
-                    bool miniValue = false;
-                    
-                    for (const auto& command : commands) {
-                        if (!command.empty()) {
-                            const std::string& commandName = command[0];
-                            const size_t cmdLen = commandName.length();
-                            
-                            if (cmdLen > 1 && commandName[0] == ';' && commandName[1] == 'm') {
-                                // Check for ;mini=
-                                if (!foundMini && cmdLen >= MINI_PATTERN_LEN + TRUE_STR_LEN && commandName[2] == 'i') {
-                                    if (commandName.compare(0, MINI_PATTERN_LEN, MINI_PATTERN) == 0) {
-                                        switch (commandName[MINI_PATTERN_LEN]) {
-                                            case 't':
-                                                if (commandName.compare(MINI_PATTERN_LEN, TRUE_STR_LEN, TRUE_STR) == 0) {
-                                                    foundMini = true;
-                                                    miniValue = true;
-                                                }
-                                                break;
-                                            case 'f':
-                                                if (commandName.compare(MINI_PATTERN_LEN, FALSE_STR_LEN, FALSE_STR) == 0) {
-                                                    foundMini = true;
-                                                    miniValue = false;
-                                                }
-                                                break;
-                                        }
-                                    }
-                                }
-                                
-                                // Check for ;mode=
-                                if (!foundMode && cmdLen >= MODE_PATTERN_LEN + SLOT_STR.length() && commandName[2] == 'o') {
-                                    if (commandName.compare(0, MODE_PATTERN_LEN, MODE_PATTERN) == 0) {
-                                        foundMode = true;
-                                        if (commandName[MODE_PATTERN_LEN] == 's') {
-                                            modeIsSlot = (commandName.compare(MODE_PATTERN_LEN, SLOT_STR.length(), SLOT_STR) == 0);
-                                        }
-                                    }
-                                }
-                                
-                                if (foundMini && foundMode) {
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    // Apply the settings
-                    if (foundMini) {
-                        isMini = miniValue;
-                    } else if (modeIsSlot) {
-                        isSlot = true;
-                    }
-                    
-                    // Clear commands only when we've actually processed something
-                    const bool shouldClear = (commands.size() == 1 && (foundMini || foundMode)) ||
-                                       (commands.size() == 2 && foundMini && foundMode);
-                    
-                    if (shouldClear) {
-                        commands.clear();
-                        // commands.shrink_to_fit(); // Uncomment if needed
-                    }
+                     auto settings = parseCommandSettings(commands);
+                     isMini = settings.isMini;
+                     isSlot = settings.isSlot;
                 }
 
                 if (commands.size() == 0) {
@@ -4551,7 +4510,8 @@ bool drawCommandsMenu(
                         bool foundFooterHighlight = false;
                         
                         for (const auto& command : commands) {
-                            if (!command.empty()) {
+                            //if (!command.empty()) {
+                            {
                                 const std::string& _commandName = command[0];
                                 const size_t cmdLen = _commandName.length();
                                 
@@ -4772,7 +4732,7 @@ bool drawCommandsMenu(
 
             // Initial processing of commands (DUPLICATE CODE)
             for (auto& cmd : commands) {
-                if (cmd.empty()) continue;
+                //if (cmd.empty()) continue;
             
                 commandName = cmd[0];
                 
