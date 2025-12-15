@@ -397,7 +397,7 @@ bool processHold(uint64_t keysDown, uint64_t keysHeld, u64& holdStartTick, bool&
             lastCommandIsHold = false;
             lastKeyName.clear();
         }
-        
+
         if (onRelease) onRelease();
         return true;
     }
@@ -4525,6 +4525,10 @@ bool drawCommandsMenu(
                                             if (!foundFooter && cmdLen > FOOTER_PATTERN_LEN && _commandName[7] == '=') {
                                                 if (_commandName.compare(0, FOOTER_PATTERN_LEN, FOOTER_PATTERN) == 0) {
                                                     commandFooter = _commandName.substr(FOOTER_PATTERN_LEN);
+                                                    // If there are additional arguments, append them (handles spaces in footer)
+                                                    for (size_t j = 1; j < command.size(); ++j) {
+                                                        commandFooter += " " + command[j];
+                                                    }
                                                     removeQuotes(commandFooter);
                                                     foundFooter = true;
                                                     if (foundFooterHighlight) break; // Early exit
@@ -4877,6 +4881,10 @@ bool drawCommandsMenu(
                                 }
                                 if (commandName.compare(0, FOOTER_PATTERN_LEN, FOOTER_PATTERN) == 0) {
                                     commandFooter = commandName.substr(FOOTER_PATTERN_LEN);
+                                    // If there are additional arguments, append them (handles spaces in footer)
+                                    for (size_t j = 1; j < cmd.size(); ++j) {
+                                        commandFooter += " " + cmd[j];
+                                    }
                                     removeQuotes(commandFooter);
                                     continue;
                                 }
@@ -5258,34 +5266,16 @@ bool drawCommandsMenu(
                         interpretAndExecuteCommands, getSourceReplacement, commands, originalOptionName, false, false, -1, unlockedTrackbar, onEveryTick);
                 
                     // Set the SCRIPT_KEY listener
-                    trackBar->setScriptKeyListener([commands, keyName = originalOptionName, packagePath, lastPackageHeader, showWidget]() {
+                    trackBar->setScriptKeyListener([commands, keyName = originalOptionName, packagePath, lastPackageHeader, showWidget, trackBar]() {
                         
                         
                         //const std::string valueStr = parseValueFromIniSection(packagePath+"config.ini", keyName, "value");
                         //std::string indexStr = parseValueFromIniSection(packagePath+"config.ini", keyName, "index");
 
 
-                        std::string valueStr = "";
-                        std::string indexStr = "";
-                        
-                        {
-                            auto configIniData = getParsedDataFromIniFile(packagePath + "config.ini");
-                            auto sectionIt = configIniData.find(keyName);
-                            if (sectionIt != configIniData.end()) {
-                                auto valueIt = sectionIt->second.find("value");
-                                if (valueIt != sectionIt->second.end()) {
-                                    valueStr = valueIt->second;
-                                }
-                                
-                                auto indexIt = sectionIt->second.find("index");
-                                if (indexIt != sectionIt->second.end()) {
-                                    indexStr = indexIt->second;
-                                }
-                            }
-                        }
-
-                        if (!isValidNumber(indexStr))
-                            indexStr = "0";
+                        // Use trackbar's CURRENT state instead of reading from file
+                        const std::string valueStr = ult::to_string(trackBar->getProgress());
+                        const std::string indexStr = ult::to_string(trackBar->getIndex());
 
                         // Handle the commands and placeholders for the trackbar
                         auto modifiedCmds = getSourceReplacement(commands, keyName, ult::stoi(indexStr), packagePath);
@@ -5336,7 +5326,7 @@ bool drawCommandsMenu(
                         interpretAndExecuteCommands, getSourceReplacement, commands, originalOptionName, false, unlockedTrackbar, onEveryTick);
                     
                     // Set the SCRIPT_KEY listener
-                    stepTrackBar->setScriptKeyListener([commands, keyName = originalOptionName, packagePath, lastPackageHeader, showWidget]() {
+                    stepTrackBar->setScriptKeyListener([commands, keyName = originalOptionName, packagePath, lastPackageHeader, showWidget, stepTrackBar]() {
                         const bool isFromMainMenu = (packagePath == PACKAGE_PATH);
                         
                         // Parse the value and index from the INI file
@@ -5344,27 +5334,9 @@ bool drawCommandsMenu(
                         //std::string indexStr = parseValueFromIniSection(packagePath + "config.ini", keyName, "index");
 
 
-                        std::string valueStr = "";
-                        std::string indexStr = "";
-                        
-                        {
-                            auto configIniData = getParsedDataFromIniFile(packagePath + "config.ini");
-                            auto sectionIt = configIniData.find(keyName);
-                            if (sectionIt != configIniData.end()) {
-                                auto valueIt = sectionIt->second.find("value");
-                                if (valueIt != sectionIt->second.end()) {
-                                    valueStr = valueIt->second;
-                                }
-                                
-                                auto indexIt = sectionIt->second.find("index");
-                                if (indexIt != sectionIt->second.end()) {
-                                    indexStr = indexIt->second;
-                                }
-                            }
-                        }
-                        
-                        if (!isValidNumber(indexStr))
-                            indexStr = "0";
+                        // Use stepTrackBar's CURRENT state
+                        const std::string valueStr = ult::to_string(stepTrackBar->getProgress());
+                        const std::string indexStr = ult::to_string(stepTrackBar->getIndex());
 
                         // Get and modify the commands with the appropriate replacements
                         auto modifiedCmds = getSourceReplacement(commands, keyName, ult::stoi(indexStr), packagePath);
@@ -5485,7 +5457,7 @@ bool drawCommandsMenu(
                         interpretAndExecuteCommands, getSourceReplacement, commands, originalOptionName, unlockedTrackbar, onEveryTick);
                     
                     // Set the SCRIPT_KEY listener
-                    namedStepTrackBar->setScriptKeyListener([commands, keyName = originalOptionName, packagePath, entryList=entryList, lastPackageHeader, showWidget]() {
+                    namedStepTrackBar->setScriptKeyListener([commands, keyName = originalOptionName, packagePath, entryList=entryList, lastPackageHeader, showWidget, namedStepTrackBar]() {
                         const bool isFromMainMenu = (packagePath == PACKAGE_PATH);
                     
                         // Parse the value and index from the INI file
@@ -5493,32 +5465,10 @@ bool drawCommandsMenu(
                         //std::string indexStr = parseValueFromIniSection(packagePath + "config.ini", keyName, "index");
 
 
-                        std::string valueStr = "";
-                        std::string indexStr = "";
-                        
-                        {
-                            const auto configIniData = getParsedDataFromIniFile(packagePath + "config.ini");
-                            auto sectionIt = configIniData.find(keyName);
-                            if (sectionIt != configIniData.end()) {
-                                auto valueIt = sectionIt->second.find("value");
-                                if (valueIt != sectionIt->second.end()) {
-                                    valueStr = valueIt->second;
-                                }
-                                
-                                auto indexIt = sectionIt->second.find("index");
-                                if (indexIt != sectionIt->second.end()) {
-                                    indexStr = indexIt->second;
-                                }
-                            }
-                        }
-                    
-                        // Fallback if indexStr is not a valid number
-                        if (!isValidNumber(indexStr))
-                            indexStr = "0";
-                    
-                        // Ensure the index is within the bounds of the entryList
-                        const size_t entryIndex = std::min(static_cast<size_t>(ult::stoi(indexStr)), entryList.size() - 1);
-                        valueStr = entryList[entryIndex];  // Update valueStr based on the current entry in the list
+                        // Use namedStepTrackBar's CURRENT state
+                        const std::string indexStr = ult::to_string(namedStepTrackBar->getIndex());
+                        const size_t entryIndex = std::min(static_cast<size_t>(namedStepTrackBar->getIndex()), entryList.size() - 1);
+                        const std::string valueStr = entryList[entryIndex];
                     
                         // Get and modify the commands with the appropriate replacements
                         auto modifiedCmds = getSourceReplacement(commands, keyName, entryIndex, packagePath);
