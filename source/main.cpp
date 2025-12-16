@@ -5149,29 +5149,29 @@ bool drawCommandsMenu(
             if (isFile(packageConfigIniPath)) {
                 packageConfigData = getParsedDataFromIniFile(packageConfigIniPath);
                 
-                //bool shouldSaveINI = false;
-                bool shouldSaveINI = syncIniValue(packageConfigData, packageConfigIniPath, optionName, SYSTEM_STR, commandSystem);
-                shouldSaveINI |= syncIniValue(packageConfigData, packageConfigIniPath, optionName, MODE_STR, commandMode);
-                shouldSaveINI |= syncIniValue(packageConfigData, packageConfigIniPath, optionName, GROUPING_STR, commandGrouping);
+                bool shouldSaveINI = false;
                 
                 // Only sync footer if pattern was provided
                 shouldSaveINI |= syncIniValue(packageConfigData, packageConfigIniPath, optionName, FOOTER_STR, commandFooter);
                 
-                // Only sync footer_highlight if the pattern was defined in package INI
-                if (commandFooterHighlightDefined) {
-                    std::string footerHighlightStr = commandFooterHighlight ? TRUE_STR : FALSE_STR;
-            
-                    const bool existed = !syncIniValue(
-                        packageConfigData, packageConfigIniPath, optionName,
-                        "footer_highlight", footerHighlightStr
-                    );
-            
-                    // only load the value if it existed
-                    if (existed) {
-                        commandFooterHighlight = (footerHighlightStr == TRUE_STR);
+                // Always try to load footer_highlight from config.ini if it exists
+                auto optionIt = packageConfigData.find(optionName);
+                if (optionIt != packageConfigData.end()) {
+                    auto footerHighlightIt = optionIt->second.find("footer_highlight");
+                    if (footerHighlightIt != optionIt->second.end() && !footerHighlightIt->second.empty()) {
+                        // Load the non-empty value from config.ini
+                        commandFooterHighlight = (footerHighlightIt->second == TRUE_STR);
+                        commandFooterHighlightDefined = true;
                     }
-            
-                    shouldSaveINI |= !existed;
+                }
+                
+                // Only write footer_highlight back if it was defined in package INI but missing/empty in config
+                if (commandFooterHighlightDefined && optionIt != packageConfigData.end()) {
+                    auto it = optionIt->second.find("footer_highlight");
+                    if (it == optionIt->second.end() || it->second.empty()) {
+                        packageConfigData[optionName]["footer_highlight"] = commandFooterHighlight ? TRUE_STR : FALSE_STR;
+                        shouldSaveINI = true;
+                    }
                 }
                 
                 // Save all changes in one batch write
@@ -5182,23 +5182,19 @@ bool drawCommandsMenu(
                 // Load any existing data first (might be empty if file doesn't exist)
                 packageConfigData = getParsedDataFromIniFile(packageConfigIniPath);
                 
-                // Add the default values
-                packageConfigData[optionName][SYSTEM_STR] = commandSystem;
-                packageConfigData[optionName][MODE_STR] = commandMode;
-                packageConfigData[optionName][GROUPING_STR] = commandGrouping;
-                
                 // Only add footer if pattern was provided
                 if (!commandFooter.empty() && commandFooter != NULL_STR) {
                     packageConfigData[optionName][FOOTER_STR] = commandFooter;
                 }
-
                 // Only add footer_highlight if it was defined in package INI
                 if (commandFooterHighlightDefined) {
                     packageConfigData[optionName]["footer_highlight"] = commandFooterHighlight ? TRUE_STR : FALSE_STR;
                 }
                 
                 // Save the config file once
-                saveIniFileData(packageConfigIniPath, packageConfigData);
+                if ((!commandFooter.empty() && commandFooter != NULL_STR) || commandFooterHighlightDefined) {
+                    saveIniFileData(packageConfigIniPath, packageConfigData);
+                }
                 packageConfigData.clear();
             }
             
