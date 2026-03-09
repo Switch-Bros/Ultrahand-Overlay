@@ -848,26 +848,6 @@ void powerOffAllControllers() {
 
 
 
-void initializeTheme(const std::string& themeIniPath = THEME_CONFIG_INI_PATH) {
-    tsl::hlp::ini::IniData themeData = getParsedDataFromIniFile(themeIniPath);
-    auto& themeSection = themeData[THEME_STR];
-    bool needsUpdate = false;
-
-    const bool hasThemeSection = isFile(themeIniPath) && (themeData.count(THEME_STR) > 0);
-    for (size_t i = 0; i < tsl::defaultThemeSettingsCount; ++i) {
-        const auto& setting = tsl::defaultThemeSettings[i];
-        if (!hasThemeSection || themeSection.count(setting.key) == 0) {
-            themeSection[setting.key] = setting.value;
-            needsUpdate = true;
-        }
-    }
-
-    if (needsUpdate)
-        saveIniFileData(themeIniPath, themeData);
-    if (!isDirectory(THEMES_PATH))
-        createDirectory(THEMES_PATH);
-}
-
 /**
  * @brief Synchronize Tesla and Ultrahand key combos.
  *
@@ -1452,7 +1432,7 @@ void drawTable(
     const bool sameCol = (tableInfoTextColor == tableInfoTextHighlightColor);
 
     // Use nanoseconds for high-performance timing
-    auto lastUpdateNS = std::make_shared<u64>(armTicksToNs(armGetSystemTick()));
+    auto lastUpdateNS = std::make_shared<u64>(ult::nowNs());
     static constexpr u64 ONE_SECOND_NS = 1000000000ULL;
 
     static const std::vector<std::string> specialCharacters =  {""};
@@ -1461,7 +1441,7 @@ void drawTable(
         [=](tsl::gfx::Renderer* renderer, s32 x, s32 y, s32 w, s32 h) mutable {
 
             if (usingPlaceholders) {
-                const u64 currentNS = armTicksToNs(armGetSystemTick());
+                const u64 currentNS = ult::nowNs();
                 
                 if ((currentNS - *lastUpdateNS) >= ONE_SECOND_NS) {
                     buildTableDrawerLines(
@@ -2150,14 +2130,11 @@ std::string replaceJsonPlaceholder(const std::string& arg, const std::string& co
 
 // Helper function to replace placeholders
 void replaceAllPlaceholders(std::string& source, const std::string& placeholder, const std::string& replacement) {
-    std::string lastArg;
-    while (source.find(placeholder) != std::string::npos) {
-        applyPlaceholderReplacement(source, placeholder, replacement);
-        if (source == lastArg)
-            break;
-        lastArg = source;
+    size_t pos = 0;
+    while ((pos = source.find(placeholder, pos)) != std::string::npos) {
+        source.replace(pos, placeholder.size(), replacement);
+        pos += replacement.size();
     }
-    return;
 }
 
 
@@ -2353,7 +2330,7 @@ std::vector<std::vector<std::string>> getSourceReplacement(const std::vector<std
 std::string getCurrentTimestamp(const std::string& format) {
     // Try using standard POSIX time() function
     time_t seconds = time(nullptr);
-    const u32 milliseconds = (armTicksToNs(armGetSystemTick()) / 1000000ULL) % 1000; // We lose millisecond precision with this method
+    const u32 milliseconds = (ult::nowNs() / 1000000ULL) % 1000; // We lose millisecond precision with this method
     
     std::string modifiedFormat = format;
     bool hasMilliseconds = false;
@@ -3077,6 +3054,9 @@ bool applyPlaceholderReplacements(std::vector<std::string>& cmd, const std::stri
         if (replacePlaceholdersInArg(arg, symbolPlaceholders)) {
             replacementsMade = true;
         }
+
+        // Normalize {timestamp} → {timestamp()} so the recursive handler picks it up
+        replaceAllPlaceholders(arg, "{timestamp}", "{timestamp()}");
 
         // Resolve nested placeholders - only if all internals resolve
         if (replacePlaceholdersRecursively(arg, placeholders)) {
@@ -4330,27 +4310,47 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
             break;
             
         case 'n':
-            if ((commandName == "notify" || commandName == "notification" || 
-                 commandName == "notify-now" || commandName == "notification-now")) {
-                if (cmdSize > 1) {
+            if (commandName == "notify" || commandName == "notify-now" ||
+                commandName == "notification" || commandName == "notification-now") {
+                if (cmdSize > 1 && tsl::notification) {
                     const std::string text = getUnquoted(cmd, 1);
-                    
-                    int fontSize = 23;
-                    if (cmdSize > 2) {
-                        const std::string fontStr = getUnquoted(cmd, 2);
-                        if (isValidNumber(fontStr)) {
-                            fontSize = std::clamp(ult::stoi(fontStr), 1, 34);
+                    size_t argIdx = 2;
+            
+                    // Helper: peek next arg, consume and advance only if predicate is true
+                    auto tryConsume = [&](auto pred) -> std::string {
+                        if (argIdx < cmdSize) {
+                            const std::string val = getUnquoted(cmd, argIdx);
+                            if (pred(val)) { ++argIdx; return val; }
                         }
-                    }
+                        return {};
+                    };
+            
+                    const std::string fontStr = tryConsume([](const std::string& s){ return isValidNumber(s) && ult::stoi(s) <= 34; });
+                    const std::string alignStr = tryConsume([](const std::string& s){ return s == LEFT_STR || s == CENTER_STR || s == RIGHT_STR; });
+                    const std::string splitStr = tryConsume([](const std::string& s){ return s == WORD_STR || s == CHAR_STR; });
+                    const std::string durStr = tryConsume([](const std::string& s){ return isValidNumber(s); });
+                    const std::string title    = tryConsume([](const std::string& s){ return s != TRUE_STR && s != FALSE_STR; });
+                    const std::string showTimeStr = tryConsume([](const std::string& s){ return s == TRUE_STR || s == FALSE_STR; });
+                    const std::string appId    = (argIdx < cmdSize) ? getUnquoted(cmd, argIdx) : "";
+            
+                    const bool hasTitle = !title.empty();
+                    const int  fontSize = !fontStr.empty()  ? ult::clamp(ult::stoi(fontStr), 1, 34)
+                                                             : (hasTitle ? 24 : 23);
+                    const std::string_view alignment = !alignStr.empty() ? std::string_view(alignStr)
+                                                                          : (hasTitle ? LEFT_STR : CENTER_STR);
+                    const bool showTime = showTimeStr.empty() || showTimeStr == TRUE_STR;
+            
+                    const bool now = commandName.size() > 4 &&
+                                     commandName.compare(commandName.size() - 4, 4, "-now") == 0;
                     
-                    if (tsl::notification) {
-                        const bool now = (commandName.find("-now") != std::string::npos);
-                        
-                        if (now)
-                            tsl::notification->showNow(text, fontSize);
-                        else
-                            tsl::notification->show(text, fontSize);
-                    }
+                    const u32 duration = durStr.empty()    ? (!now ? 4000u : 3000u)
+                                       : durStr == "0"     ? 0u
+                                       : static_cast<u32>(ult::clamp(ult::stoi(durStr), 500, 30000));
+                    tsl::notification->show(text, fontSize, 20,
+                                            appId, title, duration,
+                                            now, false, showTime,
+                                            alignment,
+                                            splitStr);
                 }
                 return;
             }
@@ -4644,6 +4644,21 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
             }
             break;
             
+        case 't':
+            if (commandName == "touch") {
+                if (cmdSize >= 2) {
+                    std::string filePath = cmd[1];
+                    preprocessPath(filePath, packagePath);
+                    const std::string parentDir = filePath.substr(0, filePath.rfind('/'));
+                    if (!parentDir.empty())
+                        createDirectory(parentDir);
+                    FILE* f = fopen(filePath.c_str(), "a");
+                    if (f) fclose(f);
+                }
+                return;
+            }
+            break;
+
         case 'u':
             if (cmdSize >= 3 && commandName == "unzip") {
                 std::string sourcePath = cmd[1];
@@ -4771,9 +4786,9 @@ void backgroundInterpreter(void* workPtr) {
     if (ult::isHidden.load(std::memory_order_acquire)) {
         if (tsl::notification && ult::useNotifications) {
             if (commandSuccess.load(std::memory_order_acquire))
-                tsl::notification->show(NOTIFY_HEADER + TASK_IS_COMPLETE);
+                tsl::notification->showNow(NOTIFY_HEADER + TASK_IS_COMPLETE);
             else
-                tsl::notification->show(NOTIFY_HEADER + TASK_HAS_FAILED);
+                tsl::notification->showNow(NOTIFY_HEADER + TASK_HAS_FAILED);
         }
     }
 
