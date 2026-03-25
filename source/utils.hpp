@@ -1324,7 +1324,7 @@ static bool buildTableDrawerLines(
                 }
                 else {
                     baseSection.push_back(getTranslated(cmd[0]));
-                    baseInfo.push_back(getTranslated(cmd.size() > 2 ? cmd[2] : ""));
+                    baseInfo.push_back(getTranslated(cmd.size() > 1 ? cmd[1] : ""));
                 }
             }
         }
@@ -1436,8 +1436,6 @@ void drawTable(
     u64 lastUpdateNS = ult::nowNs();
     static constexpr u64 ONE_SECOND_NS = 1000000000ULL;
 
-    static const std::vector<std::string> specialCharacters = {ult::DIVIDER_SYMBOL};
-
     // Pre-compute height before moving the vectors into the closure
     const u32 itemHeight = static_cast<u32>(
         16 * cacheExpSec.size()
@@ -1484,8 +1482,8 @@ void drawTable(
                 // Fastest path: same colors, minimal function calls
                 for (size_t i = 0; i < count; ++i) {
                     const s32 yPos = y + cacheYOff[i];
-                    renderer->drawStringWithColoredSections(cacheExpSec[i], false, specialCharacters, baseX, yPos, 16, secColor, dividerColor);
-                    renderer->drawStringWithColoredSections(cacheExpInfo[i], false, specialCharacters, x + cacheXOff[i], yPos, 16, infoColor, dividerColor);
+                    renderer->drawStringWithColoredSections(cacheExpSec[i], false, tsl::s_dividerSpecialChars, baseX, yPos, 16, secColor, dividerColor);
+                    renderer->drawStringWithColoredSections(cacheExpInfo[i], false, tsl::s_dividerSpecialChars, x + cacheXOff[i], yPos, 16, infoColor, dividerColor);
                 }
             } else {
                 // Different colors path
@@ -1493,7 +1491,7 @@ void drawTable(
                 
                 for (size_t i = 0; i < count; ++i) {
                     const s32 yPos = y + cacheYOff[i];
-                    renderer->drawStringWithColoredSections(cacheExpSec[i], false, specialCharacters, baseX, yPos, 16, secColor, dividerColor);
+                    renderer->drawStringWithColoredSections(cacheExpSec[i], false, tsl::s_dividerSpecialChars, baseX, yPos, 16, secColor, dividerColor);
                     renderer->drawStringWithHighlight(
                         cacheExpInfo[i], false, x + cacheXOff[i], yPos, 16,
                         infoColor, hiliteColor
@@ -1624,8 +1622,8 @@ void addPackageInfo(tsl::elm::List* list, auto& packageHeader, std::string type 
     addField(_TITLE,        packageHeader.title,                  "none");
     addField(_VERSION,      packageHeader.version,                "none");
     addField(creatorHeader, packageHeader.creator,                "none");
-    addField(_ABOUT,        getTranslated(packageHeader.about),   defaultLang == "en" ? "word" : "char");
-    addField(_CREDITS,      getTranslated(packageHeader.credits), "word");
+    addField(_ABOUT,        getTranslated(packageHeader.about),   defaultLang == "en" ? WORD_STR : CHAR_STR);
+    addField(_CREDITS,      getTranslated(packageHeader.credits), WORD_STR);
     std::vector<std::vector<std::string>> dummyTableData;
     drawTable(list, dummyTableData, sectionLines, infoLines, xOffset, 20, 9, 3, DEFAULT_STR, DEFAULT_STR, DEFAULT_STR, LEFT_STR, false, false, true);
 }
@@ -2116,6 +2114,19 @@ std::string replaceJsonPlaceholder(const std::string& arg, const std::string& co
         if (validValue && value && cJSON_IsString(value) && value->valuestring) {
             // Append the value as-is, even if it's an empty string
             result.append(value->valuestring);
+        } else if (validValue && value && cJSON_IsNumber(value)) {
+            // Handle numeric JSON values
+            double d = value->valuedouble;
+            if (d == (double)(long long)d) {
+                result.append(std::to_string((long long)d));
+            } else {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%g", d);
+                result.append(buf);
+            }
+        } else if (validValue && value && cJSON_IsBool(value)) {
+            // Handle boolean JSON values
+            result.append(cJSON_IsTrue(value) ? TRUE_STR : FALSE_STR);
         } else {
             // Key doesn't exist or isn't a string - try "null" fallback
             cJSON* fallbackValue = cJSON_GetObjectItemCaseSensitive(root, NULL_STR.c_str());
@@ -4343,7 +4354,7 @@ void processCommand(const std::vector<std::string>& cmd, const std::string& pack
             
                     const bool hasTitle = !title.empty();
                     const int  fontSize = !fontStr.empty()  ? std::clamp(ult::stoi(fontStr), 1, 34)
-                                                             : (hasTitle ? 24 : 23);
+                                                             : (hasTitle ? 24 : 26);
                     const std::string_view alignment = !alignStr.empty() ? std::string_view(alignStr)
                                                                           : (hasTitle ? LEFT_STR : CENTER_STR);
                     const bool showTime = showTimeStr.empty() || showTimeStr == TRUE_STR;
