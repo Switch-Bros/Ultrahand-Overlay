@@ -27,6 +27,7 @@
 #define STBTT_STATIC
 #define TESLA_INIT_IMPL
 
+#include <exception_wrap.hpp> // must be declared in main
 #include <ultra.hpp>
 #include <tesla.hpp>
 #include <utils.hpp>
@@ -51,6 +52,12 @@ constexpr size_t indexPlaceholderLength = indexPlaceholder.size();
 
 static std::string selectedPackage; // for package forwarders
 static std::string nextToggleState;
+
+// Page cursor memory: remembers where the user was on each page/tab
+static std::string mainMenuLeftItem;  // cursor for the left tab (overlays or packages)
+static std::string mainMenuRightItem; // cursor for the right tab
+// Per-nesting-level page cursors for PackageMenu: .first = left page, .second = right page
+static std::vector<std::pair<std::string,std::string>> pkgPageCursors;
 
 // Overlay booleans
 static bool returningToMain = false;
@@ -352,6 +359,7 @@ bool handleRunningInterpreter(uint64_t& keysDown, uint64_t& keysHeld) {
 static u64 holdStartTick = 0;
 static std::string lastSelectedListItemFooter;
 static std::vector<std::vector<std::string>> storedCommands;
+static bool holdRumbleFired[3] = {false, false, false}; // guards for the ~33%, ~66%, ~100% rumble pulses
 
 bool processHold(uint64_t keysDown, uint64_t keysHeld, u64& holdStartTick, bool& isHolding,
                 std::function<void()> onComplete,
@@ -372,6 +380,7 @@ bool processHold(uint64_t keysDown, uint64_t keysHeld, u64& holdStartTick, bool&
         isHolding = false;
         displayPercentage.store(0, std::memory_order_release);
         runningInterpreter.store(false, std::memory_order_release);
+        holdRumbleFired[0] = holdRumbleFired[1] = holdRumbleFired[2] = false;
         
         if (lastSelectedListItem) {
             // Reset touch hold state
@@ -412,7 +421,17 @@ bool processHold(uint64_t keysDown, uint64_t keysHeld, u64& holdStartTick, bool&
     const int percentage = std::min(100, static_cast<int>((elapsedMs * 100) / 3000));
     displayPercentage.store(percentage, std::memory_order_release);
     
-    if (percentage > 20 && (percentage % 30) == 0) {
+    // Threshold-crossing rumble pulses — fired at ~33%, ~66%, ~100% of the hold.
+    // Using >= + a consumed flag guarantees exactly one pulse per threshold
+    // regardless of frame timing, fixing the frame-skip inconsistency of % 30 == 0.
+    if (!holdRumbleFired[0] && percentage >= 30) {
+        holdRumbleFired[0] = true;
+        triggerRumbleDoubleClickFeedback();
+    } else if (!holdRumbleFired[1] && percentage >= 60) {
+        holdRumbleFired[1] = true;
+        triggerRumbleDoubleClickFeedback();
+    } else if (!holdRumbleFired[2] && percentage >= 90) {
+        holdRumbleFired[2] = true;
         triggerRumbleDoubleClickFeedback();
     }
     
@@ -420,6 +439,7 @@ bool processHold(uint64_t keysDown, uint64_t keysHeld, u64& holdStartTick, bool&
     if (percentage >= 100) {
         isHolding = false;
         displayPercentage.store(-1, std::memory_order_release);
+        holdRumbleFired[0] = holdRumbleFired[1] = holdRumbleFired[2] = false;
         
         if (lastSelectedListItem) {
             lastSelectedListItem->resetTouchHold();
@@ -641,7 +661,7 @@ private:
     std::string entryName, entryMode, overlayName, dropdownSelection, settingsIniPath;
     bool isInSection = false, inQuotes = false, isFromMainMenu = false;
     std::string languagesVersion = APP_VERSION;
-    int MAX_PRIORITY = 20;
+    //int MAX_PRIORITY = 20;
     std::string comboLabel;
 
     bool exitOnBack = false;
@@ -880,6 +900,15 @@ private:
                 returnJumpItemValue = cleanVersionLabel(returnJumpItemValue);
             } else if (iniKey == "hide_overlay_versions" || iniKey == "hide_package_versions") {
                 returnJumpItemValue = "";
+            } else if (iniKey == "auto_ntp_sync") {
+                if (!state) {
+                    if (!ult::isFile(NTP_SYNC_PENDING_FLAG_FILEPATH)) {
+                        FILE* file = std::fopen((NTP_SYNC_PENDING_FLAG_FILEPATH).c_str(), "w");
+                        if (file) {
+                            std::fclose(file);
+                        }
+                    }
+                }
             }
 
             state = !state;
@@ -903,6 +932,8 @@ public:
         if (dropdownSelection == "softwareUpdateMenu") {
             devImageData.clear();
             devImageData.shrink_to_fit();
+            devImageDismissTick = 0;
+            devImageDismissing  = false;
         }
     }
 
@@ -1089,7 +1120,44 @@ public:
             if (loadDevImages()) {
                 creatorStartTick = nextBlinkTick = blinkEndTick = 0;
                 creatorAnimDone = false;
-                list->addItem(new tsl::elm::CustomDrawer([](tsl::gfx::Renderer* renderer, u16, u16, u16, u16){drawDevImage(renderer);}));
+
+                struct DevImageElement : public tsl::elm::Element {
+                    void draw(tsl::gfx::Renderer* r) override { drawDevImage(r); }
+                    void layout(u16, u16, u16, u16) override {}
+                    bool onTouch(tsl::elm::TouchEvent ev, s32 cx, s32 cy,
+                                 s32, s32, s32, s32) override {
+                        const bool inLandingZone =
+                            cx >= static_cast<s32>(258 + ult::layerEdge)
+                         && cx <  static_cast<s32>(258 + devImageWidth + ult::layerEdge)
+                         && cy >= 557 && cy < 557 + devImageHeight;
+
+                        // Hold-to-delay: pause slide-in timer while finger rests in landing zone
+                        if (ev == tsl::elm::TouchEvent::Touch || ev == tsl::elm::TouchEvent::Hold)
+                            devImageTouchHeld = inLandingZone;
+                        else if (ev == tsl::elm::TouchEvent::Release)
+                            devImageTouchHeld = false;
+
+                        // Tap-to-dismiss: works at any point once the image is at least partially visible
+                        constexpr s32 startY = static_cast<s32>(557.0f + devImageHeight);
+                        if (ev == tsl::elm::TouchEvent::Touch
+                            && devImageDismissTick == 0
+                            && devImageCurrentDrawY < startY
+                            && cx >= static_cast<s32>(258 + ult::layerEdge)
+                            && cx <  static_cast<s32>(258 + devImageWidth + ult::layerEdge)
+                            && cy >= devImageCurrentDrawY
+                            && cy <  devImageCurrentDrawY + devImageHeight) {
+                            devImageDismissStartY = devImageCurrentDrawY;
+                            devImageDismissTick   = armGetSystemTick();
+                            devImageDismissing    = true;
+                            creatorAnimDone       = true; // ensure draw state machine skips slide-in branch
+                        }
+                        return false; // non-consuming so scroll still works
+                    }
+                };
+                auto* imgElem = new DevImageElement();
+                imgElem->m_isItem  = false;
+                imgElem->m_isTable = true;
+                list->addItem(imgElem);
             }
         } else if (dropdownSelection == "systemMenu") {
             
@@ -1567,6 +1635,7 @@ public:
             createToggleListItem(list, PCB_TEMPERATURE, hidePCBTemp, "hide_pcb_temp", true);
             createToggleListItem(list, BATTERY, hideBattery, "hide_battery", true);
             createToggleListItem(list, BACKDROP, hideWidgetBackdrop, "hide_widget_backdrop", true);
+            createToggleListItem(list, BORDER, hideWidgetBorder, "hide_widget_border", true);
 
             addHeader(list, WIDGET_SETTINGS);
             createToggleListItem(list, DYNAMIC_COLORS, dynamicWidgetColors, "dynamic_widget_colors");
@@ -1669,6 +1738,8 @@ public:
             useHapticFeedback = getBoolValue("haptic_feedback", false); // FALSE_STR default
             createToggleListItem(list, HAPTIC_FEEDBACK, useHapticFeedback, "haptic_feedback");
 
+            useAutoNTPSync = getBoolValue("auto_ntp_sync", true); // FALSE_STR default
+            createToggleListItem(list, AUTO_NTP_SYNC, useAutoNTPSync, "auto_ntp_sync");
 
             useOpaqueScreenshots = getBoolValue("opaque_screenshots", true); // TRUE_STR default
             createToggleListItem(list, OPAQUE_SCREENSHOTS, useOpaqueScreenshots, "opaque_screenshots");
@@ -1691,8 +1762,13 @@ public:
                 hideUnsupported = getBoolValue("hide_unsupported", false); // FALSE_STR default
                 createToggleListItem(list, SHOW_UNSUPPORTED, hideUnsupported, "hide_unsupported", true, true, true);
             }
+
             usePageSwap = getBoolValue("page_swap", false); // FALSE_STR default
             createToggleListItem(list, PAGE_SWAP, usePageSwap, "page_swap", false, true);
+            usePageRecall = getBoolValue("page_recall", true); // TRUE_STR default
+            createToggleListItem(list, PAGE_RECALL, usePageRecall, "page_recall");
+            useLaunchRecall = getBoolValue("launch_recall", true); // TRUE_STR default
+            createToggleListItem(list, LAUNCH_RECALL, useLaunchRecall, "launch_recall");
 
             hideOverlayVersions = getBoolValue("hide_overlay_versions", false); // FALSE_STR default
             createToggleListItem(list, OVERLAY_VERSIONS, hideOverlayVersions, "hide_overlay_versions", true, true);
@@ -1763,6 +1839,7 @@ public:
         // Handle delete item continuous hold behavior
         if (isHolding) {
             processHold(keysDown, keysHeld, holdStartTick, isHolding, [this]() {
+                triggerExitFeedback();
                 if (requestOverlayExit()) {
                     ult::launchingOverlay.store(true, std::memory_order_release);
                     tsl::Overlay::get()->close();
@@ -1900,7 +1977,7 @@ private:
     bool requiresAMS110Handling = false;
 
     bool isInSection, inQuotes, isFromMainMenu;
-    int MAX_PRIORITY = 20;
+    int MAX_PRIORITY = 25;
 
     std::string modeTitle;
 
@@ -2966,9 +3043,10 @@ public:
         lastSelectedListItem = nullptr;
         tsl::clearGlyphCacheNow.store(true, release);
     }
-        
+    
     void processSelectionCommands() {
         if (ult::expandedMemory) maxItemsLimit = 0; // uncapped for loader+
+        else if (!ult::limitedMemory) maxItemsLimit = 400; // raise cap for 6MB heap
     
         removeEmptyCommands(selectionCommands);
     
@@ -5193,14 +5271,23 @@ bool drawCommandsMenu(
                                     selectedListItem = listItem;
                                     
                                     std::string newKey = "";
+                                    // Normalize footer for option-mode checkmark matching:
+                                    // SelectionOverlay splits items on " - " and uses only the left
+                                    // part (itemName) for comparison. Seed selectedFooterDict with
+                                    // that same left part so boot_package-written footers like
+                                    // "18 - (0)" correctly match itemName "18".
+                                    const auto normalizeFooterKey = [](const std::string& f) -> std::string {
+                                        const size_t dashPos = f.find(" - ");
+                                        return (dashPos != std::string::npos) ? f.substr(0, dashPos) : f;
+                                    };
                                     if (inPackageMenu) {
                                         newKey = lastSection + keyName;
                                         if (selectedFooterDict.find(newKey) == selectedFooterDict.end())
-                                            selectedFooterDict[newKey] = footer;
+                                            selectedFooterDict[newKey] = normalizeFooterKey(footer);
                                     } else {
                                         newKey = "sub_" + lastSection + keyName;
                                         if (selectedFooterDict.find(newKey) == selectedFooterDict.end())
-                                            selectedFooterDict[newKey] = footer;
+                                            selectedFooterDict[newKey] = normalizeFooterKey(footer);
                                     }
                                     
                                     if (commandMode == OPTION_STR || commandMode == SLOT_STR) {
@@ -5468,6 +5555,7 @@ public:
         //std::lock_guard<std::mutex> lock(transitionMutex);
 
         if (returningToMain || returningToHiddenMain) {
+            lastOpenPackagePath.clear();  // no longer in a package
             tsl::clearGlyphCacheNow.store(true, release);
             clearMemory();
 
@@ -5519,6 +5607,7 @@ public:
         if (dropdownSection.empty()){
             inPackageMenu = true;
             lastMenu = "packageMenu";
+            lastOpenPackagePath = packagePath;  // track for combo redirect detection
         } else {
             inSubPackageMenu = true;
             lastMenu = "subPackageMenu";
@@ -5656,7 +5745,7 @@ public:
         if (usingPages) {
             simulatedMenu.exchange(false, std::memory_order_acq_rel);
             
-            bool wasSimulated = false;
+            //bool wasSimulated = false;
             {
                 if (simulatedNextPage.exchange(false, std::memory_order_acq_rel)) {
                     if (currentPage == LEFT_STR) {
@@ -5665,7 +5754,7 @@ public:
                     else if (currentPage == RIGHT_STR) {
                         keysDown |= KEY_DLEFT;
                     }
-                    wasSimulated = true;
+                    //wasSimulated = true;
                 }
             }
     
@@ -5689,17 +5778,39 @@ public:
                 if (!isTouching && slideCondition && (keysDown & navKey) &&
                     (!onTrack ? !(keysHeld & ~navKey & ALL_KEYS_MASK) : !(keysHeld & ~KEY_R & ~navKey & ALL_KEYS_MASK))) {
                     {
-                        std::lock_guard<std::mutex> lock(tsl::elm::s_safeToSwapMutex);
-                        if (tsl::elm::s_safeToSwap.load(acquire)) {
-                            tsl::swapTo<PackageMenu>(packagePath, dropdownSection, destPage, packageName, nestedLayer, pageHeader);
-                            resetSlideState();
-                            if (!wasSimulated)
-                                triggerNavigationFeedback();
-                            else {
-                                triggerRumbleClick.store(true, release);
-                                signalHaptics();
+                        //bool expected = false;
+                        //if (tsl::elm::s_swapPending.compare_exchange_strong(
+                        //        expected, true, std::memory_order_acq_rel)) {
+                        //    tsl::swapTo<PackageMenu>(packagePath, dropdownSection, destPage, packageName, nestedLayer, pageHeader);
+                        //    resetSlideState();
+                        //    //if (!wasSimulated)
+                        //    //    triggerNavigationFeedback();
+                        //    //else {
+                        //    //    triggerRumbleClick.store(true, release);
+                        //    //    signalHaptics();
+                        //    //}
+                        //    triggerNavigationFeedback();
+                        //}
+                        // Ensure pkgPageCursors has an entry for this nesting level
+                        if (usePageRecall) {
+                            while (pkgPageCursors.size() <= static_cast<size_t>(nestedLayer))
+                                pkgPageCursors.emplace_back("", "");
+                            // Save cursor for the page we're leaving; restore cursor for the page we're entering
+                            if (onLeftPage) {
+                                pkgPageCursors[nestedLayer].first  = s_lastFocusedItemText;
+                                jumpItemName = pkgPageCursors[nestedLayer].second;
+                            } else {
+                                pkgPageCursors[nestedLayer].second = s_lastFocusedItemText;
+                                jumpItemName = pkgPageCursors[nestedLayer].first;
                             }
+                            jumpItemValue = "";
+                            jumpItemExactMatch.store(false, release);
+                            skipJumpReset.store(true, release);
                         }
+                        tsl::swapTo<PackageMenu>(packagePath, dropdownSection, destPage, packageName, nestedLayer, pageHeader);
+                        resetSlideState();
+                        triggerNavigationFeedback();
+
                         return true;
                     }
                 }
@@ -5723,6 +5834,7 @@ public:
 
             if (nestedMenuCount == 0) {
                 inPackageMenu = false;
+                if (usePageRecall) pkgPageCursors.clear(); // returning to main menu: discard all package page cursors
                 if (!inHiddenMode.load(std::memory_order_acquire))
                     returningToMain = true;
                 else
@@ -5741,6 +5853,9 @@ public:
             }
             if (nestedMenuCount > 0) {
                 nestedMenuCount--;
+                // Discard page cursors for the level we just left
+                if (usePageRecall && (pkgPageCursors.size() > static_cast<size_t>(nestedMenuCount + 1)))
+                    pkgPageCursors.resize(nestedMenuCount + 1);
                 if (lastPackageMenu == "subPackageMenu") {
                     returningToSubPackage = true;
                 } else {
@@ -5776,6 +5891,9 @@ public:
                 // Decrement nestedMenuCount when returning via context
                 if (nestedMenuCount > 0)
                     nestedMenuCount--;
+                // Discard page cursors for the level we just left
+                if (usePageRecall && pkgPageCursors.size() > static_cast<size_t>(nestedMenuCount + 1))
+                    pkgPageCursors.resize(nestedMenuCount + 1);
                 
                 jumpItemName = returnTo.option;
                 jumpItemValue = "";
@@ -5902,6 +6020,8 @@ public:
 bool triggerBootCommands = true;
 bool toPackages = false;
 bool inOverlay = false;
+bool isComboReturnFrom = false;    // set when --comboReturnFrom was passed; gated on useLaunchRecall in loadInitialGui
+bool isComboReturnPackage = false; // set when --comboReturnPackage was passed; gated on useLaunchRecall in loadInitialGui
 
 /**
  * @brief The `MainMenu` class handles the main menu overlay functionality.
@@ -6251,6 +6371,17 @@ public:
                     jumpItemName = newOverlayName;
                     jumpItemValue = hideOverlayVersions ? "" : displayVersion;
                     jumpItemExactMatch.store(true, std::memory_order_release);
+                } else if (!comboReturnOverlayFilename.empty() &&
+                           overlayFileName == comboReturnOverlayFilename) {
+                    // Combo return: user hit the combo while inside this overlay (any mode).
+                    // Position the cursor on this overlay's list item so they land back on
+                    // it when the overlay menu opens.  Consumed here so it cannot misfire
+                    // on subsequent menu builds.
+                    comboReturnOverlayFilename.clear();
+                    comboReturnOverlayMode.clear();
+                    jumpItemName = newOverlayName;
+                    jumpItemValue = hideOverlayVersions ? "" : displayVersion;
+                    jumpItemExactMatch.store(true, std::memory_order_release);
                 }
                                 
                 listItem->setClickListener([listItem, overlayFile, newStarred, overlayFileName, overlayName, overlayVersion, displayVersion, requiresAMS110Handling, supportsAMS110, buildOverlayReturnName](s64 keys) {
@@ -6263,7 +6394,7 @@ public:
                     // Check for single key press (no other keys)
                     const s64 cleanKeys = keys & ALL_KEYS_MASK;
                     
-                    if ((keys & KEY_A && cleanKeys == KEY_A)) {
+                    if (keys & KEY_A && cleanKeys == KEY_A && !(keys & ~KEY_A & ALL_KEYS_MASK)) {
                         if (!requiresAMS110Handling) {
                             disableSound.store(true, std::memory_order_release);
                             disableHaptics.store(true, std::memory_order_release);
@@ -6306,7 +6437,7 @@ public:
                         }
                     }
                     
-                    if (keys & STAR_KEY && cleanKeys == STAR_KEY) {
+                    if (keys & STAR_KEY && cleanKeys == STAR_KEY && !(keys & ~STAR_KEY & ALL_KEYS_MASK)) {
                         if (!overlayFile.empty()) {
                             setIniFileValue(OVERLAYS_INI_FILEPATH, overlayFileName, STAR_STR, newStarred ? TRUE_STR : FALSE_STR);
                         }
@@ -6321,7 +6452,7 @@ public:
                         return true;
                     }
                     
-                    if (keys & SETTINGS_KEY && cleanKeys == SETTINGS_KEY) {
+                    if (keys & SETTINGS_KEY && cleanKeys == SETTINGS_KEY && !(keys & ~SETTINGS_KEY & ALL_KEYS_MASK)) {
                         prepareSettingsNavigation();
                         returnJumpItemName = buildOverlayReturnName(newStarred, overlayFileName, overlayName);
                         returnJumpItemValue = hideOverlayVersions ? "" : displayVersion;
@@ -6331,7 +6462,7 @@ public:
                         return true;
                     }
                     
-                    if (keys & SYSTEM_SETTINGS_KEY && cleanKeys == SYSTEM_SETTINGS_KEY) {
+                    if (keys & SYSTEM_SETTINGS_KEY && cleanKeys == SYSTEM_SETTINGS_KEY && !(keys & ~SYSTEM_SETTINGS_KEY & ALL_KEYS_MASK)) {
                         returnJumpItemName = buildOverlayReturnName(newStarred, overlayFileName, overlayName);
                         returnJumpItemValue = hideOverlayVersions ? "" : displayVersion;
                         return true;
@@ -6573,6 +6704,17 @@ public:
                 }
                 listItem->setTextColor(usePackageTitles ? tsl::ultPackageTextColor : tsl::packageTextColor);
                 listItem->disableClickAnimation();
+
+                // Combo return: position the cursor on the package the user was browsing.
+                // Uses contains-match (exactMatch=false) — same as the B-button return path —
+                // to stay robust against any subtle m_text transformations (translations,
+                // unicode conversion) that could break a byte-exact comparison.
+                if (!comboReturnPackageName.empty() && packageName == comboReturnPackageName) {
+                    comboReturnPackageName.clear();
+                    jumpItemName = displayName;
+                    jumpItemValue = hidePackageVersions ? "" : displayVersion;
+                    jumpItemExactMatch.store(false, std::memory_order_release);
+                }
                 
                 listItem->setClickListener([listItem, packageFilePath, newStarred, packageName, newPackageName, packageVersion, displayVersion, packageStarred, buildReturnName](s64 keys) {
                     if (runningInterpreter.load(acquire)) return false;
@@ -6584,7 +6726,7 @@ public:
                     // Check for single key press (no other keys)
                     const s64 cleanKeys = keys & ALL_KEYS_MASK;
                     
-                    if (keys & KEY_A && cleanKeys == KEY_A) {
+                    if (keys & KEY_A && cleanKeys == KEY_A && !(keys & ~KEY_A & ALL_KEYS_MASK)) {
                         inMainMenu.store(false, std::memory_order_release);
                         
                         // Check for boot package
@@ -6636,7 +6778,7 @@ public:
                         return true;
                     }
                     
-                    if (keys & STAR_KEY && cleanKeys == STAR_KEY) {
+                    if (keys & STAR_KEY && cleanKeys == STAR_KEY && !(keys & ~STAR_KEY & ALL_KEYS_MASK)) {
                         if (!packageName.empty()) {
                             setIniFileValue(PACKAGES_INI_FILEPATH, packageName, STAR_STR, newStarred ? TRUE_STR : FALSE_STR);
                         }
@@ -6650,7 +6792,7 @@ public:
                         return true;
                     }
                     
-                    if (keys & SETTINGS_KEY && cleanKeys == SETTINGS_KEY) {
+                    if (keys & SETTINGS_KEY && cleanKeys == SETTINGS_KEY && !(keys & ~SETTINGS_KEY & ALL_KEYS_MASK)) {
                         prepareSettingsNavigation();
                         returnJumpItemName = buildReturnName(newStarred, packageName, newPackageName);
                         returnJumpItemValue = displayVersion;
@@ -6660,7 +6802,7 @@ public:
                         return true;
                     }
                     
-                    if (keys & SYSTEM_SETTINGS_KEY && cleanKeys == SYSTEM_SETTINGS_KEY) {
+                    if (keys & SYSTEM_SETTINGS_KEY && cleanKeys == SYSTEM_SETTINGS_KEY && !(keys & ~SYSTEM_SETTINGS_KEY & ALL_KEYS_MASK)) {
                         returnJumpItemName = buildReturnName(newStarred, packageName, newPackageName);
                         returnJumpItemValue = displayVersion;
                         return true;
@@ -6807,7 +6949,7 @@ public:
 
                 const bool onLeftPage = (!usePageSwap && menuMode != PACKAGES_STR) || (usePageSwap && menuMode != OVERLAYS_STR);
                 
-                bool wasSimulated = false;
+                //bool wasSimulated = false;
                 {
                     if (simulatedNextPage.exchange(false, std::memory_order_acq_rel)) {
                         if (onLeftPage) {
@@ -6816,7 +6958,7 @@ public:
                         else {
                             keysDown |= KEY_DLEFT;
                         }
-                        wasSimulated = true;
+                        //wasSimulated = true;
                     }
                 }
                 
@@ -6847,21 +6989,41 @@ public:
                         (!onTrack ? !(keysHeld & ~KEY_LEFT & ALL_KEYS_MASK) : !(keysHeld & ~KEY_LEFT & ~KEY_R & ALL_KEYS_MASK));
                     if (!hidePackages && !isTouching && slideCondition && (wantRight || wantLeft)) {
                         {
-                            std::lock_guard<std::mutex> lock(tsl::elm::s_safeToSwapMutex);
-
-                            if (tsl::elm::s_safeToSwap.load(acquire)) {
-                                currentMenu = onLeftPage ? (usePageSwap ? OVERLAYS_STR : PACKAGES_STR)
-                                                         : (usePageSwap ? PACKAGES_STR : OVERLAYS_STR);
-                                resetNavState();
-                                tsl::swapTo<MainMenu>();
-
-                                if (!wasSimulated)
-                                    triggerNavigationFeedback();
-                                else {
-                                    triggerRumbleClick.store(true, release);
-                                    signalHaptics();
+                            //bool expected = false;
+                            //if (tsl::elm::s_swapPending.compare_exchange_strong(
+                            //        expected, true, std::memory_order_acq_rel)) {
+                            //    currentMenu = onLeftPage ? (usePageSwap ? OVERLAYS_STR : PACKAGES_STR)
+                            //                             : (usePageSwap ? PACKAGES_STR : OVERLAYS_STR);
+                            //    resetNavState();
+                            //    tsl::swapTo<MainMenu>();
+                            //    
+                            //    //if (!wasSimulated)
+                            //    //    triggerNavigationFeedback();
+                            //    //else {
+                            //    //    triggerRumbleClick.store(true, release);
+                            //    //    signalHaptics();
+                            //    //}
+                            //    triggerNavigationFeedback();
+                            //}
+                            currentMenu = onLeftPage ? (usePageSwap ? OVERLAYS_STR : PACKAGES_STR)
+                                                     : (usePageSwap ? PACKAGES_STR : OVERLAYS_STR);
+                            
+                            // Save cursor for the page we're leaving; restore cursor for the page we're entering
+                            if (usePageRecall) {
+                                if (onLeftPage) {
+                                    mainMenuLeftItem  = s_lastFocusedItemText;
+                                    jumpItemName      = mainMenuRightItem;
+                                } else {
+                                    mainMenuRightItem = s_lastFocusedItemText;
+                                    jumpItemName      = mainMenuLeftItem;
                                 }
+                                jumpItemValue = "";
+                                jumpItemExactMatch.store(false, release);
+                                skipJumpReset.store(true, release);
                             }
+                            tsl::swapTo<MainMenu>();
+                            resetNavState();
+                            triggerNavigationFeedback();
                             return true;
                         }
                     }
@@ -7030,6 +7192,7 @@ void initializeSettingsAndDirectories() {
     ensureDefault("launch_combos",            TRUE_STR);
     ensureDefault("sound_effects",            TRUE_STR);
     ensureDefault("haptic_feedback",          FALSE_STR);
+    ensureDefault("auto_ntp_sync",            TRUE_STR);
     ensureDefault("swipe_to_open",            TRUE_STR);
     ensureDefault("opaque_screenshots",       TRUE_STR);
     ensureDefault("silence_notifications",    FALSE_STR);
@@ -7068,6 +7231,8 @@ void initializeSettingsAndDirectories() {
     setDefaultValue("package_titles",         FALSE_STR, usePackageTitles);
     setDefaultValue("package_versions",       TRUE_STR,  usePackageVersions);
     setDefaultValue("page_swap",              FALSE_STR, usePageSwap);        // also set by parseOverlaySettings
+    setDefaultValue("page_recall",            TRUE_STR,  usePageRecall);
+    setDefaultValue("launch_recall",          TRUE_STR,  useLaunchRecall);
     setDefaultValue("right_alignment",        FALSE_STR, useRightAlignment);  // also set by parseOverlaySettings
     setDefaultValue("startup_notification",   TRUE_STR,  useStartupNotification);
 
@@ -7130,6 +7295,28 @@ public:
     virtual std::unique_ptr<tsl::Gui> loadInitialGui() override {
 
         initializeSettingsAndDirectories();
+
+        // Combo-return handling, gated on useLaunchRecall.
+        // All side-effect work was intentionally deferred from main() to here so it
+        // only runs when the feature is actually enabled.  initializeSettingsAndDirectories()
+        // has already run, so we drive toPackages directly instead of going through the INI.
+        if (isComboReturnFrom && !ult::useLaunchRecall) {
+            comboReturnOverlayFilename.clear();
+            comboReturnOverlayMode.clear();
+            setUltrahandConfig(IN_HIDDEN_OVERLAY_STR, FALSE_STR);
+        }
+        if (isComboReturnPackage) {
+            if (ult::useLaunchRecall) {
+                // Apply the tab-switch and hidden-mode effects that main() used to write
+                // into the INI.  toPackages is set directly since initializeSettingsAndDirectories()
+                // already ran.  The hidden-package INI flag is still written so createUI() sees it.
+                toPackages = true;
+                if (parseValueFromIniSection(PACKAGES_INI_FILEPATH, comboReturnPackageName, HIDE_STR) == TRUE_STR)
+                    setUltrahandConfig(IN_HIDDEN_PACKAGE_STR, TRUE_STR);
+            } else {
+                comboReturnPackageName.clear();
+            }
+        }
 
         // Check if a package was specified via command line
         if (!selectedPackage.empty()) {
@@ -7259,6 +7446,14 @@ public:
             } else {
                 reloadingBoot = true;
             }
+
+            // For syncing ntp once per download
+            if (!ult::isFile(NTP_SYNC_PENDING_FLAG_FILEPATH)) {
+                FILE* file = std::fopen(NTP_SYNC_PENDING_FLAG_FILEPATH.c_str(), "w");
+                if (file) {
+                    std::fclose(file);
+                }
+            }
         }
 
         deleteFileOrDirectory(RELOADING_FLAG_FILEPATH);
@@ -7303,14 +7498,24 @@ int main(int argc, char* argv[]) {
         
         if (strcmp(argv[arg], "--package") == 0 && arg + 1 < argc) {
             selectedPackage.clear();
-            selectedPackage.reserve(64); // Reserve reasonable amount
+            selectedPackage.reserve(64);
             
             for (u8 nextArg = arg + 1; nextArg < argc && argv[nextArg][0] != '-'; nextArg++) {
                 if (!selectedPackage.empty()) selectedPackage += ' ';
                 selectedPackage += argv[nextArg];
                 arg = nextArg;
             }
-            break;
+        } else if (strcmp(argv[arg], "--comboReturnFrom") == 0 && arg + 1 < argc) {
+            isComboReturnFrom = true;
+            comboReturnOverlayFilename = argv[++arg];
+        } else if (strcmp(argv[arg], "--comboReturnPackage") == 0 && arg + 1 < argc) {
+            isComboReturnPackage = true;
+            comboReturnPackageName.clear();
+            for (u8 nextArg = arg + 1; nextArg < argc && argv[nextArg][0] != '-'; nextArg++) {
+                if (!comboReturnPackageName.empty()) comboReturnPackageName += ' ';
+                comboReturnPackageName += argv[nextArg];
+                arg = nextArg;
+            }
         }
     }
     return tsl::loop<Overlay, tsl::impl::LaunchFlags::None>(argc, argv);
