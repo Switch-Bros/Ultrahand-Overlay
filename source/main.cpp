@@ -4235,7 +4235,7 @@ static bool handleTriggerReturnToPackages(const std::string& packagePath) {
     inSubPackageMenu = false;
     inScriptMenu    = false;
     inSelectionMenu = false;
-    returningToMain        = false;
+    returningToMain        = true; // changed to true (bug fix)
     returningToHiddenMain  = false;
     jumpItemName.clear();
     jumpItemValue.clear();
